@@ -87,86 +87,22 @@ class Evaluator:
                 # add inspection points to be inspected by robot r
                 if self.inspection_problem.robot_ids[r] in self.inspection_problem.inspection_points[k].inspectability: #future fix: fix for other idxs than 0 1
                     if not self.viewpoints[k].is_inspected:
-                        self.viewpoints[k].is_inspected = self.isPointInspected(self.viewpoints[k], self.inspection_problem.inspection_points[k], poses[r], r)
+                        self.viewpoints[k].is_inspected = self.isPointInspected(self.viewpoints[k], self.inspection_problem.inspection_points[k], poses[r])
 
-    def isPointInspected(self, viewpoint, inspection_point, pose, robot_index):
+    def isPointInspected(self, viewpoint, inspection_point, pose):
 
-        if inspection_point.type == 't':
+        viewpoints_distance = self.viewpoints_t_distance
+        
+        # Distance deviation from desired viewpoint position
+        dist_dev = abs(np.linalg.norm([
+            inspection_point.position.x - pose.x,
+            inspection_point.position.y - pose.y,
+            inspection_point.position.z - pose.z
+        ]) - viewpoints_distance)
 
-            viewpoints_distance = self.viewpoints_t_distance
-            dev_xy = np.sqrt((inspection_point.position.x - pose.x)**2 + (inspection_point.position.y - pose.y)**2)
-            dist_dev = abs(np.sqrt(dev_xy**2 + (inspection_point.position.z - pose.z)**2) - viewpoints_distance)
-            heading = wrapAngle(math.atan2(inspection_point.position.y - pose.y, inspection_point.position.x - pose.x))
-            heading_dev = abs(wrapAngle(heading - viewpoint.heading))
-            is_in_hfov = abs(wrapAngle(pose.heading - heading)) < self.horizontal_aovs[robot_index]/2
-            pitch_dev = abs(math.atan2(inspection_point.position.z - pose.z, dev_xy)) - inspection_point.inspect_tilt
+        heading_dev = abs(wrapAngle(pose.heading - viewpoint.heading))
 
-            return dist_dev <= self.allowed_dist_dev and heading_dev <= self.allowed_heading_dev and pitch_dev <= self.allowed_pitch_dev and is_in_hfov
-
-        elif inspection_point.type == 's':
-
-            viewpoints_distance = self.viewpoints_s_distance
-            dev_xy = np.sqrt((inspection_point.position.x - pose.x)**2 + (inspection_point.position.y - pose.y)**2)
-            dist_dev = abs(np.sqrt(dev_xy**2 + (inspection_point.position.z - pose.z)**2) - viewpoints_distance)
-
-
-            # SE3 Matrix = |Rotation, Translation|
-            #              |0,        1         |
-
-            # old code, was causing huge CPU load
-            # Drone_to_World = np.array([
-            #     [math.cos(pose.heading), -math.sin(pose.heading), 0.0, pose.x],
-            #     [math.sin(pose.heading), math.cos(pose.heading), 0.0, pose.y],
-            #     [0.0, 0.0, 1.0, pose.z],
-            #     [0.0, 0.0, 0.0, 1.0]])
-            # World_to_Drone = np.linalg.inv(Drone_to_World)
-
-            # new code, much more lightweight
-            D2W_rot = np.array([
-                [math.cos(pose.heading),  math.sin(pose.heading), 0],
-                [-math.sin(pose.heading), math.cos(pose.heading), 0],
-                [0,                       0,                      1]])
-
-            drone_pose = np.array([pose.x, pose.y, pose.z])
-
-            drone_pose_inv = np.matmul(D2W_rot, drone_pose)
-
-            World_to_Drone = np.array([
-                [math.cos(pose.heading),  math.sin(pose.heading), 0, -drone_pose_inv[0]],
-                [-math.sin(pose.heading), math.cos(pose.heading), 0, -drone_pose_inv[1]],
-                [0,                       0,                      1, -drone_pose_inv[2]],
-                [0,                       0,                      0, 1]])
-
-            inspection_point_transformed = np.matmul(World_to_Drone, np.array([inspection_point.position.x,
-                                                                               inspection_point.position.y,
-                                                                               inspection_point.position.z,
-                                                                               1.0]))
-
-            theta_xz = math.atan2(inspection_point_transformed[2],
-                                  inspection_point_transformed[0])
-
-            # theta_xz should be greater than -((pi/2)+(vfov/2)) and less than -((pi/2)-(vfov/2))
-            # is_in_vfov = (theta_xz > -((math.pi/2)+(self.vertical_aovs[robot_index]/2)) and theta_xz < -((math.pi/2)-(self.vertical_aovs[robot_index]/2)))
-            is_in_vfov = abs(theta_xz-(-math.pi/2)
-                             ) <= self.vertical_aovs[robot_index]/2
-
-            theta_xy = math.atan2(inspection_point_transformed[2],
-                                  inspection_point_transformed[1])
-
-            # is_in_hfov = (theta_xy > -((math.pi/2)+(self.horizontal_aovs[robot_index]/2)) and theta_xy < -((math.pi/2)-(self.horizontal_aovs[robot_index]/2)))
-            is_in_hfov = abs(theta_xy-(-math.pi/2)
-                             ) <= self.horizontal_aovs[robot_index]/2
-
-            # theta_xy should be greater than -((pi/2)+(hfov/2)) and less than -((pi/2)-(hfov/2))
-
-            heading_dev = abs(wrapAngle(pose.heading - viewpoint.heading))
-
-
-            return is_in_hfov and is_in_vfov and dist_dev <= self.allowed_dist_dev and heading_dev <= self.allowed_heading_dev
-
-        else:
-            raise Exception(
-                f"Type '{inspection_point.type}' of inspection point is not valid! Valid types are: 's' for solar panel and 't' for tower.")
+        return dist_dev <= self.allowed_dist_dev and heading_dev <= self.allowed_heading_dev
 
 
     def inspectionPointToViewPoint(self, inspection_point):
@@ -174,7 +110,7 @@ class Evaluator:
         y = inspection_point.position.y + self.viewpoints_t_distance * np.sin(inspection_point.inspect_heading) * np.sin(inspection_point.inspect_tilt)
         z = inspection_point.position.z + self.viewpoints_t_distance * np.cos(inspection_point.inspect_tilt)
 
-        heading = np.unwrap([inspection_point.inspect_heading + np.pi])[0]
+        heading = np.unwrap([inspection_point.inspect_heading])[0]
         color_index = inspection_point.inspectability[0] if len(inspection_point.inspectability) == 1 else 0
 
         return Viewpoint(color_index, x, y, z, heading)

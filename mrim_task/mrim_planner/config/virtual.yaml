@@ -1,5 +1,5 @@
 problem:
-  name: "sim_challenge.problem" # [surface_mine_small.problem, surface_mine_moderate.problem, surface_mine_large.problem]
+  name: "apocalypse_small.problem" # [apocalypse_small.problem, apocalypse_moderate.problem, apocalypse_large.problem]
   plot: False
 
 # Parameters for Traveling Salesman Problem

@@ -155,9 +155,9 @@ def inspectionPointToViewPoint(inspection_point, vp_distance):
     y = inspection_point.position.y + vp_distance * np.sin(inspection_point.inspect_heading) * np.sin(inspection_point.inspect_tilt)
     z = inspection_point.position.z + vp_distance * np.cos(inspection_point.inspect_tilt)
 
-    heading = wrapAngle(np.pi + inspection_point.inspect_heading)
+    heading = wrapAngle(inspection_point.inspect_heading)
 
-    return Viewpoint(inspection_point.idx, Pose(x, y, z, heading), inspection_point.type)
+    return Viewpoint(inspection_point.idx, Pose(x, y, z, heading))
 # # #}
 
 # # #{ pointCollidesWithPath()
@@ -671,9 +671,8 @@ class ProblemLoader:
                     inspection_point.position.z = float(params[3])
                     inspection_point.inspect_heading = float(params[4])
                     inspection_point.inspect_tilt = float(params[5])
-                    inspection_point.type = str(params[6])
                     inspection_point.inspectability = []
-                    for p in params[7:]:
+                    for p in params[6:]:
                         if p == '#':
                             break
                         inspection_point.inspectability.append(int(p))

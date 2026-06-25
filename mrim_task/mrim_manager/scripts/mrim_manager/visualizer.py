@@ -342,12 +342,14 @@ class Visualizer:
         points.append([x, -y, z]);
         points.append([x, y, z]);
 
+        angle_rotate = 0.0
+
         if(camera_type == "RGB" or camera_type == "rgb"):
             for k in range(len(points)):
                 pt = Point()
-                pt.x = points[k][2]*np.cos(-np.pi/4) + points[k][0]*np.sin(-np.pi/4)
+                pt.x = points[k][2]*np.cos(angle_rotate) + points[k][0]*np.sin(angle_rotate)
                 pt.y = points[k][1]
-                pt.z = points[k][2]*np.sin(-np.pi/4) - points[k][0]*np.cos(-np.pi/4)
+                pt.z = points[k][2]*np.sin(angle_rotate) - points[k][0]*np.cos(angle_rotate)
                 marker.points.append(pt)
         else:
             for k in range(len(points)):
