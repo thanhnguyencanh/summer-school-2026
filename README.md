@@ -1,15 +1,15 @@
-# MRS Summer School 2025:  Multi-Robot Surveillance and Monitoring of a Land Surface Mine
+# MRS Summer School 2026: Multi-Robot Disaster Monitoring and Search in a Post-Disaster Environment
 
 In this Summer School task, we will focus on the cooperation of a group of two UAVs (Unmanned Aerial Vehicles) in a 3D environment with obstacles.
-The task is to plan collision-free trajectories of the UAVs so that cameras onboard the UAVs inspect a set of *N* unique inspection points.
+The task is to plan collision-free trajectories of the UAVs so that cameras onboard the UAVs locate and observe a set of *N* unique inspection points representing possible human survivors, victims, or critical objects in a disaster-affected environment.
 Both UAVs have a predefined starting position and a limit on maximal velocity and acceleration.
-The objective of the task is to minimize the time for monitoring the land surface mine while capturing all the inspection points and not colliding the UAVs with the environment or with each other.
+The objective of the task is to minimize the total mission time required to search and assess all points of interest while ensuring that all inspection points are visited, and that no collisions occur between the UAVs and the environment or between the UAVs themselves.
 An already working solution is provided as a part of the assignment.
-However, this example solution has poor performance and can be improved significantly.
+However, this example solution has poor performance and can be significantly improved.
 
 ## Installation
 
-The Summer School 2025 will use the [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system) contained in a [Apptainer](https://apptainer.org/) image (previously called Singularity).
+The Summer School 2026 will use the [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system) contained in a [Apptainer](https://apptainer.org/) image (previously called Singularity).
 A set of scripts is provided to create a layer of abstraction above the Apptainer system, so the participants only need to know how to call a shell script, e.g.,
 ```bash
 ./script.sh
@@ -33,7 +33,7 @@ Requirements:
 
 ### Installation procedure
 
-1. If you are a `git` veteran, you would think about `fork`-ing the repository, but because you are a veteran, you will know that a fork of a public repository cannot be made private, and you don't want your team's solutions to be public. So, we recommend to tap the plus sign in the top right corner, and then select the Import repository option. Add `https://github.com/ctu-mrs/summer-school-2025.git` as the link and while completing this form/page, you will find an option to make your new repository private.
+1. If you are a `git` veteran, you would think about `fork`-ing the repository, but because you are a veteran, you will know that a fork of a public repository cannot be made private, and you don't want your team's solutions to be public. So, we recommend to tap the plus sign in the top right corner, and then select the Import repository option. Add `https://github.com/ctu-mrs/summer-school-2026.git` as the link and while completing this form/page, you will find an option to make your new repository private.
 
 2. Clone your new repository to, e.g., `~/git`:
 ```bash
@@ -43,7 +43,7 @@ cd ${HOME}/git && git clone <your new repository's link>
 
 3. Run the installation script that will install dependencies, download the MRS Apptainer image containing [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system), and compile the workspace:
 ```bash
-cd ${HOME}/git/summer-school-2025 && ./install.sh
+cd ${HOME}/git/summer-school-2026 && ./install.sh
 ```
 
 ## Task overview
@@ -132,7 +132,7 @@ Your solution to both the challenges has to conform to constraints summarized in
 \* The last point of the trajectory is expected to match the starting point with up to 1 m tolerance.
 
 ## Where to code changes
-Change your code within directory `summer-school-2025/mrim_task/mrim_planner` (changes in other folders (`mrim_manager,mrim_resources, mrim_state_machine`) will not be applied during competition/evaluation) in files:
+Change your code within directory `summer-school-2026/mrim_task/mrim_planner` (changes in other folders (`mrim_manager,mrim_resources, mrim_state_machine`) will not be applied during competition/evaluation) in files:
 
 * `scripts/`
   * `planner.py`: Crossroad script where the path to your solution begins. Here you will find initial ideas and examples on how to load parameters.
@@ -208,10 +208,10 @@ Stopping the simulation is done by calling
 ```
 **Things to configure/change :**
 
-* **Problem Type:** By default, the `run_simulation.sh` spawns you 2 UAVs in the `surface mine` world and launches the *surface_mine_small* problem.
-To change the problem type to `surface_mine_moderate` or `surface_mine_large`, you have to
+* **Problem Type:** By default, the `run_simulation.sh` spawns you 2 UAVs in the `apocalypse_small` world and launches the *apocalypse_small* problem.
+To change the problem type to `apocalypse_moderate` or `apocalypse_large`, you have to
 
-  * change the parameter `problem/name` in the `mrim_task/mrim_planner/config/virtual.yaml` to `surface_mine_moderate.problem` or `surface_mine_large.problem` (see section [Testing](https://github.com/ctu-mrs/summer-school-2025?tab=readme-ov-file#problem-sets---testing))
+  * change the parameter `problem/name` in the `mrim_task/mrim_planner/config/virtual.yaml` to `apocalypse_moderate.problem` or `apocalypse_large.problem` (see section [Testing](https://github.com/ctu-mrs/summer-school-2026?tab=readme-ov-file#problem-sets---testing))
 
 You may notice that your terminal opened multiple tabs.
 Check the first page of the [MRS Cheatsheet](https://github.com/ctu-mrs/mrs_cheatsheet) if you need help navigating the tabs and panes.
@@ -243,9 +243,9 @@ If you created other ROS nodes, which shall be run separately to the `mrim_plann
 You have two problems prepared for testing and evaluating your solution.
 The problems are located in `mrim_resources/problems`: you can switch between them by changing the `problem/name` line in `mrim_planner/config/virtual.yaml` to:
 
-  1. `surface_mine_small.problem` is a simple problem with fewer IPs, good for clustering, improving TSP sequences, parametrizing the solution, and testing
-  2. `surface_mine_moderate.problem` is a complex problem with 16 IPs that will test your solution in full
-  3. `surface_mine_large.problem` is a complex problem with 30 IPs that will test your solution in full, good for final tuning of parameters (**a similar problem will be used in the competitions** described below)
+  1. `apocalypse_small.problem` is a simple problem with fewer IPs, good for clustering, improving TSP sequences, parametrizing the solution, and testing
+  2. `apocalypse_moderate.problem` is a complex problem with 16 IPs that will test your solution in full
+  3. `apocalypse_large.problem` is a complex problem with 30 IPs that will test your solution in full, good for final tuning of parameters (**a similar problem will be used in the competitions** described below)
 
 ## Competition
 
@@ -281,13 +281,13 @@ In case of a tie, **secondary key** to determine the finishing order of the part
 
 ### Virtual
 
-The dimensions of the virtual environment and inspection problem will be slightly larger than `surface_mine_large.problem`.
+The dimensions of the virtual environment and inspection problem will be slightly larger than `apocalypse_large.problem`.
 Please expect that, the solution will be tested on a ThinkPad T480s, with an Intel Core i7-8550U CPU @ 1.80GHz. 
 Your solution for the virtual environment has to conform to constraints summarized in the table above.
 
 ### Real-world
 
-The dimensions of the real-world environment and inspection problem will be similar to `surface_mine_large.problem` but with significantly less obstacles.
+The dimensions of the real-world environment and inspection problem will be similar to `apocalypse_large.problem` but with significantly less obstacles.
 The same code as the virtual challenge will be run onboard real UAVs during the real-world challenge.
 No changes are required on your side.
 However, note that the evaluation of inspected points will be based on the actual pose of the UAV in the world, not the reference trajectories.
@@ -313,7 +313,7 @@ open terminal failed: missing or unsuitable terminal: rxvt-unicode-256color
 
 If there is an update in the repository, you can pull it to your local machine using git:
 ```
-cd ${HOME}/git/summer-school-2025 && git pull
+cd ${HOME}/git/summer-school-2026 && git pull
 ```
 
 **Google**
@@ -325,15 +325,15 @@ Sometimes just writing the question down helps you to understand the problem.
 
 If you find a bug in the task, you need assistance, or you have any other questions, please contact by email one of (or all of):
 
-* Swati Dantu `dantuswa@fel.cvut.cz`
-* Tim Lakemann `lakemtim@fel.cvut.cz`
-* Martin Jiroušek `jirouma5@fel.cvut.cz`
+* Václav Riss `rissvacl@fel.cvut.cz`
+* Jindřich Třaskoš `jindrich.traskos@fel.cvut.cz`
+* Martin Zoula `zoulamar@fel.cvut.cz`
 
 We will try to help you as soon as possible.
 
 ## Disclaimer
 
-During the week of the 2025 MRS Summer School, the organizers reserve the right to:
+During the week of the 2026 MRS Summer School, the organizers reserve the right to:
 
 * to do fixes: to update the task in case of finding severe bugs in the code,
 * to maintain fairness: to change the problems or the constraints for the challenges,
