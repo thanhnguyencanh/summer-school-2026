@@ -326,7 +326,7 @@ Sometimes just writing the question down helps you to understand the problem.
 If you find a bug in the task, you need assistance, or you have any other questions, please contact by email one of (or all of):
 
 * Václav Riss `rissvacl@fel.cvut.cz`
-* Jindřich Třaskoš `jindrich.traskos@fel.cvut.cz`
+* Jindřich Třaskoš `traskjin@fel.cvut.cz`
 * Martin Zoula `zoulamar@fel.cvut.cz`
 
 We will try to help you as soon as possible.
