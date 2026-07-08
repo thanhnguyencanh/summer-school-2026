@@ -254,7 +254,7 @@ There will be two competitions:
   1. In the virtual environment, and
   2. in the real world.
 
-To participate in the competitions, you have to fill out this [google form](https://forms.gle/qKmXtWbhtERdkxds8) until Monday, August 4th, 11:59 p.m.
+To participate in the competitions, you have to fill out this [google form](https://docs.google.com/forms/d/e/1FAIpQLSfPjARSHT4r-0rZOdMXtHHdd_8pCEcELuCAOy-SjU2Zj9l46w/viewform?usp=sharing&ouid=101429188789753680433) until Monday, August 4th, 11:59 p.m.
 In the google form you are required to submit your team name, team members and your solution in a zip archive.
 The submitted archive has to contain the whole package `mrim_planner`, including two config files (`real_world.yaml` and `virtual.yaml`) in the folder `mrim_planner/config`. 
 **Please don't forget to modify the parameters in `real_world.yaml` according to your findings/configuration in virtual worlds.**
