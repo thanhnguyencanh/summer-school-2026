@@ -61,15 +61,15 @@ solution_time_constraint:
 cameras:
   red:
     angle_of_view:
-      horizontal: 1.0 # (rad)
-      vertical:   0.7 # (rad)
-    fov_length:   2.0 # (m)
-
+      horizontal: 1.6 # (rad)
+      vertical:   1.6 # (rad)
+    fov_length:   6.5 # (m)
+ 
   blue:
     angle_of_view:
-      horizontal: 1.0 # (rad)
-      vertical:   0.5 # (rad)
-    fov_length:   3.0 # (m)
+      horizontal: 1.6 # (rad)
+      vertical:   1.6 # (rad)
+    fov_length:   6.5 # (m)
 
 # Visualization parameters
 visualization:
