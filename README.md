@@ -11,9 +11,7 @@ However, this example solution has poor performance and can be significantly imp
 
 The Summer School 2026 will use the [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system) contained in a [Apptainer](https://apptainer.org/) image (previously called Singularity).
 A set of scripts is provided to create a layer of abstraction above the Apptainer system, so the participants only need to know how to call a shell script, e.g.,
-```bash
-./script.sh
-```
+
 The following steps will download the main repository, install Apptainer (only on Ubuntu-compatible OS), and download the pre-built Apptainer image.
 No further changes are made to the host operating system.
 
