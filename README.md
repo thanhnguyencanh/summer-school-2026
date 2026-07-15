@@ -238,7 +238,7 @@ If you created other ROS nodes, which shall be run separately to the `mrim_plann
 
 ## Problem sets - Testing
 
-You have two problems prepared for testing and evaluating your solution.
+You have three problems prepared for testing and evaluating your solution.
 The problems are located in `mrim_resources/problems`: you can switch between them by changing the `problem/name` line in `mrim_planner/config/virtual.yaml` to:
 
   1. `apocalypse_small.problem` is a simple problem with fewer IPs, good for clustering, improving TSP sequences, parametrizing the solution, and testing
@@ -252,7 +252,7 @@ There will be two competitions:
   1. In the virtual environment, and
   2. in the real world.
 
-To participate in the competitions, you have to fill out this [google form](https://docs.google.com/forms/d/e/1FAIpQLSfPjARSHT4r-0rZOdMXtHHdd_8pCEcELuCAOy-SjU2Zj9l46w/viewform?usp=sharing&ouid=101429188789753680433) until Monday, August 4th, 11:59 p.m.
+To participate in the competitions, you have to fill out this [google form](https://docs.google.com/forms/d/e/1FAIpQLSfPjARSHT4r-0rZOdMXtHHdd_8pCEcELuCAOy-SjU2Zj9l46w/viewform?usp=sharing&ouid=101429188789753680433) until Monday, August 3th, 11:59 p.m.
 In the google form you are required to submit your team name, team members and your solution in a zip archive.
 The submitted archive has to contain the whole package `mrim_planner`, including two config files (`real_world.yaml` and `virtual.yaml`) in the folder `mrim_planner/config`. 
 **Please don't forget to modify the parameters in `real_world.yaml` according to your findings/configuration in virtual worlds.**
@@ -262,7 +262,7 @@ zip -r team_name.zip mrim_planner
 ```
 **The late submissions will not be accepted for the competition**.
 
-The evaluation of particular solutions in the real-world challenge will be performed on Tuesday, August 5th, with the real-time score presentation.
+The evaluation of particular solutions in the real-world challenge will be performed on Tuesday, August 4th, with the real-time score presentation.
 The virtual challenge will be evaluated on Tuesday.
 The results will be presented during an awards ceremony organized at the experimental site after the real-world challenge.
 **The final score of the solution equals the sum of successfully inspected IPs.**
