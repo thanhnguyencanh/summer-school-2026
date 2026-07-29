@@ -119,18 +119,43 @@ class Grid3D():
                 print("Obstacle Index out of bounds of Gridspace!")
 
 
-        safety_steps = np.ceil(safety_distance / self.resolution_xyz).astype(np.int)
+        safety_steps = np.ceil(safety_distance / self.resolution_xyz).astype(int)
         x,y,z        = np.ogrid[-safety_steps:safety_steps+1, -safety_steps:safety_steps+1 , -safety_steps:safety_steps+1]
         mask         = x**2 + y**2 + z**2 <= safety_steps**2
         self.array   = ndimage.binary_dilation(self.array, mask)
     # # #}
 
+    # # #{ addKeepoutSphere()
+    def addKeepoutSphere(self, center_xyz, radius):
+        '''
+        Marks all cells within the given radius of the metric point center_xyz as occupied.
+
+        Parameters:
+            center_xyz (list/tuple): metric coordinates (x, y, z) of the sphere center
+            radius (float): sphere radius in meters
+        '''
+        idx   = self.metricToIndex(center_xyz)
+        steps = int(np.ceil(radius / self.resolution_xyz))
+
+        x0, x1 = max(0, idx[0] - steps), min(self.dim[0], idx[0] + steps + 1)
+        y0, y1 = max(0, idx[1] - steps), min(self.dim[1], idx[1] + steps + 1)
+        z0, z1 = max(0, idx[2] - steps), min(self.dim[2], idx[2] + steps + 1)
+
+        if x0 >= x1 or y0 >= y1 or z0 >= z1:
+            return
+
+        xs, ys, zs = np.ogrid[x0:x1, y0:y1, z0:z1]
+        mask       = (xs - idx[0])**2 + (ys - idx[1])**2 + (zs - idx[2])**2 <= steps**2
+
+        self.array[x0:x1, y0:y1, z0:z1] = np.maximum(self.array[x0:x1, y0:y1, z0:z1], mask)
+    # # #}
+
     # # #{ metricToIndex()
     def metricToIndex(self, xyz):
         x, y, z = xyz[0], xyz[1], xyz[2]
-        ix = np.round((x - self.idx_zero[0]) / self.resolution_xyz).astype(np.int)
-        iy = np.round((y - self.idx_zero[1]) / self.resolution_xyz).astype(np.int)
-        iz = np.round((z - self.idx_zero[2]) / self.resolution_xyz).astype(np.int)
+        ix = np.round((x - self.idx_zero[0]) / self.resolution_xyz).astype(int)
+        iy = np.round((y - self.idx_zero[1]) / self.resolution_xyz).astype(int)
+        iz = np.round((z - self.idx_zero[2]) / self.resolution_xyz).astype(int)
         iz = 0 if iz < 0 else iz
         return (ix, iy, iz)
     # # #}

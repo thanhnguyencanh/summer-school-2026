@@ -7,7 +7,7 @@ import math
 import dubins
 
 from utils import segmentPointDist, distEuclidean, lineSphereIntersections, simulateStep, wrapAngle, angleDiff, poseInDistance
-from data_types import Pose, Viewpoint
+from data_types import Point, Pose, Viewpoint
 import numpy as np
 
 import toppra as ta
@@ -137,10 +137,11 @@ class Trajectory:
 class TrajectoryUtils():
 
     # #{ __init__()
-    def __init__(self, max_velocity, max_acceleration, dT):
-        self.dT               = dT
-        self.max_velocity     = max_velocity
-        self.max_acceleration = max_acceleration
+    def __init__(self, max_velocity, max_acceleration, dT, heading_hold_dist=0.0):
+        self.dT                = dT
+        self.max_velocity      = max_velocity
+        self.max_acceleration  = max_acceleration
+        self.heading_hold_dist = heading_hold_dist
     # #}
 
     ## | ------------- Functions: trajectory (re)sampling ------------- |
@@ -192,21 +193,21 @@ class TrajectoryUtils():
             # include start node
             wps_interp.append(subtraj[0])
 
-            # interpolate headings
+            # interpolate headings linearly w.r.t. the distance traveled along the subtrajectory
+            dist_along = 0.0
             for i in range(1, len(subtraj) - 1):
 
                 subtraj_point_0 = subtraj[i - 1].point
                 subtraj_point_1 = subtraj[i].point
 
-                # [STUDENTS TODO] Implement heading interpolation here
-                # Guidelines:
-                #  - A subtrajectory is a segment of the trajectory consisting of consecutive poses. A subtrajectory is defined by its start and end poses.
-                #  - Interpolate the heading linearly as a function of the distance along the subtrajectory.
-                #  - Always wrap angles to the range (-pi, pi) using wrapAngle() from utils.py.
-                #  - Use distEuclidean() from utils.py to compute distances between points.
+                dist_along += distEuclidean(subtraj_point_0, subtraj_point_1)
 
-                # [STUDENTS TODO] Change variable 'desired_heading', nothing else
-                desired_heading = waypoints[0].heading
+                if subtraj_len > 1e-6:
+                    ratio = dist_along / subtraj_len
+                else:
+                    ratio = float(i) / float(len(subtraj) - 1)
+
+                desired_heading = wrapAngle(hdg_from + ratio * delta_heading)
 
                 # replace heading
                 current_heading   = desired_heading
@@ -439,6 +440,11 @@ class TrajectoryUtils():
                 print('[SMOOTHING PATH]')
                 waypoints = self.getSmoothPath(trajectory.waypoints, smoothing_la_dist, smoothing_sampling_step)
 
+                # fall back to the raw waypoints if the smoothing failed
+                if not waypoints:
+                    print('[SMOOTHING PATH] Smoothing failed, falling back to raw waypoints.')
+                    waypoints = trajectory.waypoints
+
             # Otherwise, use the waypoints
             else:
                 waypoints = trajectory.waypoints
@@ -446,26 +452,114 @@ class TrajectoryUtils():
             if not waypoints:
                 return None
 
+            # Remove consecutive (near-)duplicate positions: zero-length path segments break the spline parametrization
+            waypoints = self.removeDuplicateWaypoints(waypoints)
+
+            # Keep the heading fixed in close vicinity of the viewpoints to maximize the chance of a successful inspection
+            waypoints = self.holdHeadingAroundViewpoints(waypoints, self.heading_hold_dist)
+
             # Interpolate heading between waypoints
             traj_hdg_interp = self.interpolateHeading(waypoints)
             # Parametrize trajectory
             toppra_trajectory = self.getParametrizedTrajectory(traj_hdg_interp, velocity_limits, acceleration_limits)
 
+            if toppra_trajectory is None:
+                print('[ERROR] TOPPRA failed to parametrize the trajectory.')
+                return None
+
             sampling_step = trajectory.dT
 
-            # STUDENTS TODO: Sample the path parametrization 'toppra_trajectory' (instance of TOPPRA library).
-            raise NotImplementedError('[STUDENTS TODO] Trajectory sampling not finished. You have to implement it on your own.')
-            # Tips:
-            #  - check code examples for TOPPRA: https://hungpham2511.github.io/toppra/auto_examples/index.html
-            #  - use 'toppra_trajectory' and the predefined sampling step 'sampling_step'
+            # Sample the TOPPRA path parametrization with the trajectory sampling period.
+            # The final sample is taken exactly at the end of the parametrization such
+            # that the trajectory always terminates at the final waypoint.
+            duration  = toppra_trajectory.duration
+            t_samples = np.arange(0.0, duration, sampling_step)
+            t_samples = np.append(t_samples, duration)
 
-            samples = [] # [STUDENTS TODO] Fill this variable with trajectory samples
+            try:
+                samples = toppra_trajectory(t_samples)
+            except TypeError:
+                samples = toppra_trajectory.eval(t_samples)
 
             # Convert to Trajectory class
             poses      = [Pose(q[0], q[1], q[2], q[3]) for q in samples]
             trajectory = self.posesToTrajectory(poses)
 
         return trajectory
+    # #}
+
+    # #{ removeDuplicateWaypoints()
+    def removeDuplicateWaypoints(self, waypoints, eps=1e-3):
+        '''
+        Removes consecutive waypoints closer than eps to each other while preserving
+        defined headings (needed by the spline-based time parametrization which
+        requires strictly increasing path positions).
+
+        Parameters:
+            waypoints (list[Pose]): the waypoints to be filtered
+            eps (float): minimum allowed distance between consecutive waypoints
+
+        Returns:
+            filtered (list[Pose]): filtered waypoints
+        '''
+        if not waypoints:
+            return waypoints
+
+        filtered = [waypoints[0]]
+        for wp in waypoints[1:]:
+            if distEuclidean(filtered[-1].point, wp.point) < eps:
+                # do not lose a defined heading of the dropped waypoint
+                if filtered[-1].heading is None and wp.heading is not None:
+                    filtered[-1] = Pose(filtered[-1].point, wp.heading)
+                continue
+            filtered.append(wp)
+
+        return filtered
+    # #}
+
+    # #{ holdHeadingAroundViewpoints()
+    def holdHeadingAroundViewpoints(self, waypoints, hold_dist):
+        '''
+        Pins the heading of the waypoints within the traveled distance hold_dist from every
+        pose with a defined heading (the viewpoints). This keeps the UAV heading constant
+        while passing the close vicinity of an inspection viewpoint, maximizing the chance
+        that a trajectory sample fulfills the inspection heading tolerance.
+
+        Parameters:
+            waypoints (list[Pose]): waypoints where viewpoints have a defined heading
+            hold_dist (float): distance along the path around viewpoints in which the heading is held
+
+        Returns:
+            waypoints (list[Pose]): waypoints with headings pinned around the viewpoints
+        '''
+        if hold_dist is None or hold_dist <= 0.0 or not waypoints:
+            return waypoints
+
+        n           = len(waypoints)
+        pinned_idxs = [i for i in range(n) if waypoints[i].heading is not None]
+
+        for i in pinned_idxs:
+            hdg = waypoints[i].heading
+
+            # pin the heading forwards along the path
+            dist, j = 0.0, i
+            while j + 1 < n:
+                dist += distEuclidean(waypoints[j].point, waypoints[j + 1].point)
+                j    += 1
+                if dist > hold_dist or waypoints[j].heading is not None:
+                    break
+                waypoints[j] = Pose(waypoints[j].point, hdg)
+
+            # pin the heading backwards along the path
+            dist, j = 0.0, i
+            while j - 1 >= 0:
+                dist += distEuclidean(waypoints[j].point, waypoints[j - 1].point)
+                j    -= 1
+                if dist > hold_dist or waypoints[j].heading is not None:
+                    break
+                waypoints[j] = Pose(waypoints[j].point, hdg)
+
+        return waypoints
     # #}
 
     # #{ checkCollisionsOnHorizonAndBreak()
@@ -618,34 +712,68 @@ class TrajectoryUtils():
             # Delay trajectory of the second UAV at start by the length of the first-UAV trajectory
             trajectories[1].delayStart(delay_t)
 
-        ## |  [COLLISION AVOIDANCE METHOD #2]: Delay UAV with shorter trajectory at start until there is no collision occurring  |
+        ## |  [COLLISION AVOIDANCE METHOD #2]: Delay one of the UAVs at its start until no collision occurs  |
         elif method == 'delay_till_no_collisions_occur':
 
-            raise NotImplementedError('[STUDENTS TODO] Collision prevention method \'delay_till_no_collisions_occur\' not finished. You have to finish it on your own.')
-            # Tips:
-            #  - you might select which trajectory it is better to delay
-            #  - the smallest delay step is the sampling step stored in variable 'self.dT'
+            if len(trajectories) == 2:
 
-            delay_step = self.dT
-            traj_times = [t.getTime() for t in trajectories]
-            traj_lens  = [t.getLength() for t in trajectories]
+                # positions of the trajectories as numpy arrays
+                xyzs = [np.array([p.point.asList() for p in t.getPoses()]) for t in trajectories]
 
-            # Decide which UAV should be delayed
-            # [STUDENTS TODO] CHANGE BELOW
-            delay_robot_idx, nondelay_robot_idx = 0, 1
+                # # #{ collidesWithDelay()
+                def collidesWithDelay(traj_a, traj_b, delay_samples, safety_dist):
+                    '''
+                    Checks whether trajectory B delayed at its start by delay_samples collides with
+                    trajectory A. Both UAVs are assumed to hold their last pose once their
+                    trajectory is finished (UAV parked at its final position).
+                    '''
+                    total = max(len(traj_a), len(traj_b) + delay_samples)
+                    idx   = np.arange(total)
+                    ia    = np.minimum(idx, len(traj_a) - 1)
+                    ib    = np.clip(idx - delay_samples, 0, len(traj_b) - 1)
+                    diff  = traj_a[ia] - traj_b[ib]
+                    return bool(np.any(np.einsum('ij,ij->i', diff, diff) < safety_dist**2))
+                # # #}
 
-            # TIP: use function `self.trajectoriesCollide()` to check if two trajectories are in collision
-            collision_flag, collision_idx = ...
+                # # #{ findMinDelay()
+                def findMinDelay(traj_a, traj_b, safety_dist, max_delay_samples):
+                    '''
+                    Finds the minimal delay (in samples) of trajectory B such that it does
+                    not collide with trajectory A. Returns None if no such delay exists.
+                    '''
+                    for d in range(0, max_delay_samples + 1):
+                        if not collidesWithDelay(traj_a, traj_b, d, safety_dist):
+                            return d
+                    return None
+                # # #}
 
-            while collision_flag:
+                max_delay = len(xyzs[0]) + len(xyzs[1]) + 10
 
-                # delay the shorter-trajectory UAV at the start point by sampling period
-                delay_t += delay_step
+                # try delaying either of the UAVs and select the option minimizing the total mission time
+                options = []
+                for d_idx in (0, 1):
+                    o_idx = 1 - d_idx
+                    d     = findMinDelay(xyzs[o_idx], xyzs[d_idx], safety_distance, max_delay)
+                    if d is not None:
+                        mission_time = max(len(xyzs[o_idx]), len(xyzs[d_idx]) + d) * self.dT
+                        options.append((mission_time, d, d_idx))
 
-                # [STUDENTS TODO] use function `trajectory.delayStart(X)` to delay a UAV at the start location by X seconds
+                if options:
 
-                # keep checking if the robot trajectories collide
-                collision_flag, _ = ...
+                    options.sort()
+                    _, d_min, d_idx = options[0]
+
+                    if d_min > 0:
+                        delay_robot_idx, delay_t = d_idx, d_min * self.dT
+                        # the +0.5 sample prevents the int() floor in delaySegment() from
+                        # rounding the number of delay samples down due to float arithmetics
+                        trajectories[delay_robot_idx].delayStart((d_min + 0.5) * self.dT)
+
+                else:
+                    print('[COLLISION AVOIDANCE] WARNING: could not resolve collisions by delaying either UAV. Keeping the trajectories as they are.')
+
+            else:
+                print('[COLLISION AVOIDANCE] method delay_till_no_collisions_occur supports exactly 2 UAVs, got {:d}.'.format(len(trajectories)))
 
         # # #}
 
@@ -660,10 +788,12 @@ class TrajectoryUtils():
     # #{ getSmoothPath()
     def getSmoothPath(self, waypoints, lookahead_distance, sampling_step):
         '''
-        Smooths given waypoint path.
+        Smooths given waypoint path with a lookahead-based (pure pursuit like) method.
+        Poses with a defined heading (start pose and the inspection viewpoints) are
+        guaranteed to be passed exactly; only the path in between them is smoothed.
 
         Parameters:
-            waypoints (list[Pose]): the waypoints to be parametrized
+            waypoints (list[Pose]): the waypoints to be smoothed
             lookahead_distance (float): smoothing look-ahead distance in meters
             sampling_step (float): smoothing sampling distance in meters
 
@@ -671,39 +801,94 @@ class TrajectoryUtils():
             path (list[Pose]): smoothed waypoint sequence
         '''
 
-        path       = []
-        curr_pose  = waypoints[0]
+        path = [waypoints[0]]
+
+        # split the waypoints into legs at the poses with a defined heading (start pose/viewpoints/end pose)
+        leg_start = 0
+        for i in range(1, len(waypoints)):
+            if waypoints[i].heading is not None or i == len(waypoints) - 1:
+
+                leg_wps  = waypoints[leg_start:i + 1]
+                leg_path = self.smoothLeg(leg_wps, lookahead_distance, sampling_step)
+
+                if leg_path is None:
+                    print('[getSmoothPath] Smoothing of a leg failed, using the raw leg waypoints instead.')
+                    leg_path = leg_wps[1:]
+
+                path.extend(leg_path)
+                leg_start = i
+
+        return path
+
+    # #}
+
+    # #{ smoothLeg()
+    def smoothLeg(self, waypoints, lookahead_distance, sampling_step):
+        '''
+        Smooths a single leg of a waypoint path using the pure pursuit algorithm.
+
+        Parameters:
+            waypoints (list[Pose]): the waypoints of the leg (first and last pose are the leg endpoints)
+            lookahead_distance (float): smoothing look-ahead distance in meters
+            sampling_step (float): smoothing sampling distance in meters
+
+        Returns:
+            samples (list[Pose]): smoothed samples following the first pose, ending exactly at the last pose;
+                                  None if the smoothing fails
+        '''
+
+        if len(waypoints) < 2:
+            return []
+
+        end_pose = waypoints[-1]
+
+        samples    = []
+        curr_pose  = Pose(Point(waypoints[0].point.x, waypoints[0].point.y, waypoints[0].point.z), waypoints[0].heading)
         path_index = 0
 
-        path.append(curr_pose)
+        # limit the number of iterations to prevent infinite loops on degenerate inputs
+        leg_len   = self.getLength(waypoints)
+        max_iters = int(20 * (leg_len / max(sampling_step, 1e-3) + 10))
 
-        # Main control loop
-        while True:
+        for _ in range(max_iters):
 
-            prev_path_index  = path_index
             goal, path_index = self.getLookaheadPoint(curr_pose, waypoints, lookahead_distance, path_index)
 
             if goal is None:
                 return None
 
-            if path_index == len(waypoints) - 1 and distEuclidean(waypoints[-1], curr_pose) < sampling_step:
+            dist_to_end = distEuclidean(curr_pose, end_pose)
 
-                path[-1].heading = waypoints[path_index].heading # preserve last heading
-                print("Goal reached. End point = ", curr_pose, "Waypoints goal = ", waypoints[-1])
+            # steer directly at the leg end once it is within the lookahead distance:
+            # guarantees passing exactly through the viewpoints
+            if path_index == len(waypoints) - 1 and dist_to_end < lookahead_distance:
+                goal = end_pose
+
+            if path_index == len(waypoints) - 1 and dist_to_end <= sampling_step:
                 break
 
-            # preserve assigned required heading
-            if not prev_path_index == path_index:
-                path[-1].heading = waypoints[prev_path_index].heading
+            # degenerate lookahead goal: steer at the leg end instead
+            if distEuclidean(curr_pose, goal) < 1e-6:
+                goal = end_pose
+                if distEuclidean(curr_pose, goal) < 1e-6:
+                    break
 
             velocity = 1.0
             dt       = sampling_step / velocity
 
             curr_pose         = simulateStep(curr_pose, goal, velocity, dt)
             curr_pose.heading = None
-            path.append(curr_pose)
+            samples.append(curr_pose)
 
-        return path
+        else:
+            return None
+
+        # end the leg exactly at its last pose
+        if samples and distEuclidean(samples[-1], end_pose) < 0.5 * sampling_step:
+            samples.pop()
+        samples.append(Pose(Point(end_pose.point.x, end_pose.point.y, end_pose.point.z), end_pose.heading))
+
+        return samples
 
     # #}
 

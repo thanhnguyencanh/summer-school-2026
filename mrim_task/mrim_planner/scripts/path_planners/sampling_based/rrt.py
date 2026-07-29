@@ -62,6 +62,7 @@ class RRT:
         self.kdtree            = path_planner['obstacles_kdtree']
         self.safety_distance   = path_planner['safety_distance']
         self.timeout           = path_planner['timeout']
+        self.extra_keepout     = path_planner.get('extra_keepout', [])
         
         self.gaussian_sampling = path_planner['rrt/sampling/method'] == 'gaussian'
         if self.gaussian_sampling:
@@ -97,6 +98,11 @@ class RRT:
 
         if check_bounds and not self.bounds.valid(point):
             return False
+
+        # keep away from the extra keepout spheres (e.g., the start location of the other UAV)
+        for kp in self.extra_keepout:
+            if distEuclidean(point.asList(), list(kp[0:3])) < kp[3]:
+                return False
 
         # check if point is at least safety_distance away from the nearest obstacle
         nn_dist, _  = self.kdtree.query(point.asList(), k=1)
@@ -139,15 +145,12 @@ class RRT:
         point_valid = False
         while not point_valid:
 
-            raise NotImplementedError('[STUDENTS TODO] Implement Gaussian sampling in RRT (Informed RRT) to speed up the process and narrow the paths.')
-            # Tips:
-            #  - sample from Normal distribution: use numpy.random.normal (https://numpy.org/doc/stable/reference/random/generated/numpy.random.normal.html)
-            #  - to prevent deadlocks when sampling continuously, increase the sampling space by inflating the standard deviation of the gaussian sampling
-
-            # STUDENTS TODO: Sample XYZ in the state space
-            x = 0
-            y = 0
-            z = 0
+            # sample from a Normal distribution centered between the start and the end,
+            # with the standard deviation inflated by sigma_offset (grows on failures
+            # in buildTree() to prevent sampling deadlocks)
+            x = np.random.normal(mean[0], sigma[0] + sigma_offset)
+            y = np.random.normal(mean[1], sigma[1] + sigma_offset)
+            z = np.random.normal(mean[2], sigma[2] + sigma_offset)
 
             point = Point(x, y, z)
             point_valid = self.pointValid(point)
@@ -158,17 +161,12 @@ class RRT:
     # # #{ getClosestPoint()
     def getClosestPoint(self, point):
 
-        # Go through all points in tree and return the closest one to point. Uses euclidian metric.
-        min_distance = np.finfo(np.float32).max
-        cl_point     = self.start
+        # Go through all points in tree and return the closest one to point (vectorized euclidean metric).
+        nodes = list(self.tree.nodes.keys())
+        arr   = np.asarray(nodes)
+        d2    = np.sum((arr - np.asarray(point))**2, axis=1)
 
-        for p in self.tree.nodes:
-            distance = distEuclidean(point, p)
-            if distance < min_distance:
-                min_distance = distance
-                cl_point = p
-
-        return cl_point
+        return nodes[int(np.argmin(d2))]
     # # #}
 
     # # #{ setDistance()
@@ -233,14 +231,13 @@ class RRT:
         neighborhood_points = self.getPointsInNeighborhood(point, neighborhood)
         for neighbor in neighborhood_points:
 
-            raise NotImplementedError('[STUDENTS TODO] Getting node parents in RRT* not implemented. You have to finish it.')
-            # Tips:
-            #  - look for neighbor which when connected yields minimal path cost all the way back to the start
-            #  - you might need functions 'self.tree.get_cost()' or 'distEuclidean()'
+            # look for the neighbor which, when connected, yields the minimal path cost
+            # all the way back to the start
+            neighbor_cost = self.tree.get_cost(neighbor) + distEuclidean(neighbor, point)
 
-            # [STUDENTS TODO]: find a parent with optimal cost and fill these two variables
-            cost = float('inf') 
-            parent = closest_point
+            if neighbor_cost < cost:
+                cost   = neighbor_cost
+                parent = neighbor
 
         return parent, cost
     # # #}
@@ -251,10 +248,18 @@ class RRT:
         rrtstar                      = rrtstar_neighborhood is not None
         start_time                   = time.time()
         rrt_gaussian_sigma_inflation = 0.0
+        iteration                    = 0
 
         while not self.tree.valid:
 
-            point         = self.getRandomPoint() if not self.gaussian_sampling else self.getRandomPointGaussian(rrt_gaussian_sigma_inflation)
+            iteration += 1
+
+            # goal biasing: sample the goal directly once in a while to speed up the search
+            if iteration % 10 == 0:
+                point = self.end
+            else:
+                point = self.getRandomPoint() if not self.gaussian_sampling else self.getRandomPointGaussian(rrt_gaussian_sigma_inflation)
+
             closest_point = self.getClosestPoint(point)
            
             # normalize vector closest_point->point to length of branch_size
@@ -290,27 +295,25 @@ class RRT:
 
     # # #{ halveAndTest()
     def halveAndTest(self, path):
+        '''
+        Recursively straightens the path: if the straight connection of the path endpoints
+        is collision-free, the path is replaced by it; otherwise, the path is divided in
+        half and both halves are straightened recursively.
+        '''
         pt1 = path[0][0:3]
         pt2 = path[-1][0:3]
-        
+
         if len(path) <= 2:
             return path
 
-        raise NotImplementedError('[STUDENTS TODO] RRT: path straightening is not finished. Finish it on your own.')
-        # Tips:
-        #  - divide the given path by a certain ratio and use this method recursively
-        #  - validateLinePath() returns true if there are no obstacles between two points and vice-versa
-        # note that path straightening does not have an effect when using correctly implemented rrtstar
-
         if not self.validateLinePath(pt1, pt2, check_bounds=False):
-            
-            # [STUDENTS TODO] Replace seg1 and seg2 variables effectively
-            seg1 = path[:1]
-            seg2 = path[1:]
 
-            seg1.extend(seg2)
-            return seg1
-        
+            mid  = len(path) // 2
+            seg1 = self.halveAndTest(path[:mid + 1])
+            seg2 = self.halveAndTest(path[mid:])
+
+            return seg1[:-1] + seg2
+
         return [path[0], path[-1]]
     # # #}
 

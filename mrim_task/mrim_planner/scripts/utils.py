@@ -282,6 +282,70 @@ def lineSphereIntersections(sphere_center, sphere_radius, point1, point2):
         return [solution1, solution2]
 # #} end of lineSphereIntersections
 
+# #{ trapezoidalTime()
+
+def trapezoidalTime(dist, v_max, a_max):
+    '''
+    Time to traverse a straight segment of length dist with a trapezoidal
+    velocity profile (zero start/end velocity, limits v_max, a_max).
+
+    Parameters:
+        dist (float): segment length (m)
+        v_max (float): maximum velocity (m/s)
+        a_max (float): maximum acceleration (m/s^2)
+
+    Returns:
+        float: traversal time (s)
+    '''
+    if dist <= 0.0 or v_max <= 0.0 or a_max <= 0.0:
+        return 0.0
+
+    # distance needed to accelerate to v_max and decelerate back to zero
+    d_ramps = v_max * v_max / a_max
+
+    if dist >= d_ramps:
+        return dist / v_max + v_max / a_max
+
+    return 2.0 * math.sqrt(dist / a_max)
+
+# #}
+
+# #{ estimateFlightTime()
+
+def estimateFlightTime(pose_from, pose_to, dynamics):
+    '''
+    Estimates the flight time between two poses given per-axis dynamic constraints.
+    The estimate assumes a straight-line flight with trapezoidal velocity profiles
+    computed separately for the horizontal and vertical axes, and accounts for the
+    time needed to rotate to the goal heading (if both headings are defined).
+
+    Parameters:
+        pose_from (Pose): start pose
+        pose_to (Pose): goal pose
+        dynamics (tuple): ((max_vel_x, max_vel_y, max_vel_z), (max_acc_x, max_acc_y, max_acc_z), max_heading_rate)
+
+    Returns:
+        float: estimated flight time (s)
+    '''
+    (v_x, v_y, v_z), (a_x, a_y, a_z), hdg_rate = dynamics
+
+    dx  = pose_to.point.x - pose_from.point.x
+    dy  = pose_to.point.y - pose_from.point.y
+    dz  = abs(pose_to.point.z - pose_from.point.z)
+    dxy = math.sqrt(dx * dx + dy * dy)
+
+    t_xy = trapezoidalTime(dxy, min(v_x, v_y), min(a_x, a_y))
+    t_z  = trapezoidalTime(dz, v_z, a_z)
+
+    t = max(t_xy, t_z)
+
+    if pose_from.heading is not None and pose_to.heading is not None and hdg_rate > 1e-3:
+        t = max(t, abs(angleDiff(pose_from.heading, pose_to.heading)) / hdg_rate)
+
+    return t
+
+# #}
+
 # # #{ pointCollidesWithObstacles()
 def pointCollidesWithObstacles(point, obstacles, safety_distance):
     '''

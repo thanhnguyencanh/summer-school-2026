@@ -4,41 +4,51 @@ problem:
 
 # Parameters for Traveling Salesman Problem
 tsp:
-  clustering: 'random'            # [STUDENTS TODO: implement better method than the default] Clustering method of viewpoints: [random (default), kmeans]
-  distance_estimates: 'euclidean' # Method for evaluating cost of paths in TSP heuristic: [euclidean (default), astar, rrt, rrtstar]
+  clustering: 'kmeans'                 # Clustering method of viewpoints: [random, kmeans]
+  distance_estimates: 'euclidean_time' # Method for evaluating cost of paths in TSP heuristic: [euclidean, euclidean_time, astar, rrt, rrtstar]
+  balance_viewpoints: true             # Re-balance the shared viewpoints between the UAVs to minimize the makespan
+  balance_time_budget: 20.0            # (s) maximum time spent by the balancing
+  detour_penalty: 1.5                  # Cost multiplier of obstructed straight-line connections in the flight time estimates
 
 # Parameters for path planning
 path_planner:
-  timeout: 60.0              # (s) timeout for single start-to-goal planning
-  method: 'rrt'              # [STUDENTS TODO: implement better method than the default] Method for generating start-to-goal paths: [euclidean, astar, rrt (default), rrtstar]
-  straighten_paths: false    # [STUDENTS TODO: implement better method than the default] Path straightening flag (default: false)
+  timeout: 15.0              # (s) timeout for single start-to-goal planning
+  method: 'astar'            # Method for generating start-to-goal paths: [euclidean, astar, rrt, rrtstar]
+  straighten_paths: true     # Path straightening flag
+  obstacle_margin: 0.1       # (m) additional planning margin added to the obstacle safety distance
 
-  # RRT and RRT* method parameters
+  # RRT and RRT* method parameters (used as a fallback if A* fails)
   rrt:
     branch_size: 3.0 # (m)
     sampling:
-      method: 'uniform' # [STUDENTS TODO: implement better method than the default] Method for sampling random points: [uniform (default), gaussian]
+      method: 'uniform' # Method for sampling random points: [uniform, gaussian]
       gaussian:
         stddev_inflation: 0.2 # Inflation of standard deviation in all axes during gaussian sampling (m)
     star:
-      neighborhood: 1.0 # (m)
+      neighborhood: 3.0 # (m)
 
   # A* method parameters
   astar:
-    grid_resolution: 0.3 # (m)
+    grid_resolution: 0.4 # (m)
 
 # Parameters for path smoothing
 path_smoothing:
-  sampling_step: 0.4  # (m) If horizontal constraints are not satisfied, TOPPRA might have returned infeasible trajectory due to too small sampling step
-  lookahead_dist: 1.0 # (m) STUDENTS TODO: find optimal value than the default] Lookahead distance for path smoothing (default: 1.0 m) 
+  sampling_step: 0.4      # (m) If horizontal constraints are not satisfied, TOPPRA might have returned infeasible trajectory due to too small sampling step
+  lookahead_dist: 0.8     # (m) Lookahead distance for path smoothing
+  heading_hold_dist: 0.6  # (m) Distance along the path around the viewpoints in which the heading is held constant
 
-# Parameters for sampling the UAVs' trajectories [TIP: do path straightening before attempting parametrization]
+# Parameters for sampling the UAVs' trajectories
 trajectory_sampling:
-  with_stops: true # [STUDENTS TODO: implement better method than the default] If true, UAVs will stop at each waypoint (default: true)
+  with_stops: false # If true, UAVs will stop at each waypoint
+
+# Additional safety margin on the dynamic constraints used for planning
+trajectories:
+  dynamics_safety_factor: 0.95
 
 # Parameters for UAV-to-UAV collision avoidance
 collision_avoidance:
-  method: 'none' # [STUDENTS TODO: implement better method than the default] [none (default), delay_2nd_till_1st_UAV_finishes, delay_till_no_collisions_occur]
+  method: 'delay_till_no_collisions_occur' # [none, delay_2nd_till_1st_UAV_finishes, delay_till_no_collisions_occur]
+  mutual_margin: 0.3                       # (m) additional margin on the mutual distance used during collision resolution
 
 # Simulation-specific parameters
 simulation:

@@ -7,6 +7,57 @@ The objective of the task is to minimize the total mission time required to sear
 An already working solution is provided as a part of the assignment.
 However, this example solution has poor performance and can be significantly improved.
 
+---
+
+## Our solution (team notes)
+
+All changes live in `mrim_task/mrim_planner` (the only folder used during the competition evaluation). What we improved over the baseline:
+
+1. **Heading interpolation** (`trajectory.py`): heading is interpolated linearly w.r.t. the distance traveled along each subtrajectory (baseline kept it constant → no points were scored).
+2. **TSP over flight-time estimates** (`tsp_solvers.py`, `utils.py`): the TSP cost matrix uses per-axis trapezoidal flight-time estimates (incl. heading rotation time) instead of Euclidean distances; straight-line connections blocked by obstacles are penalized by a detour factor (`tsp/distance_estimates: euclidean_time`).
+3. **Viewpoint assignment**: k-means clustering of the shared (purple) viewpoints with cluster-to-UAV mapping by start distance, followed by a **makespan balancing** step that moves shared viewpoints between the UAVs while a fast NN+2-opt tour estimator predicts an improvement (`tsp/balance_viewpoints`).
+4. **Fast A\* planner** (`astar.py`): rewritten with `heapq` + numpy occupancy grid, Euclidean heuristic (weight 1.1), endpoint snapping to the nearest free cell, exact metric endpoints, recursive `halveAndTest` straightening + greedy shortcut pass. RRT/RRT* (`rrt.py`) finished as well (optimal-cost parent, rewiring, Gaussian sampling, goal bias, straightening) and used as an automatic **fallback** if A* fails on a leg.
+5. **Smooth, continuous trajectories** (`trajectory.py`): pure-pursuit path smoothing that is guaranteed to pass exactly through every viewpoint, heading held constant within ±0.6 m of each viewpoint (robust inspection), TOPPRA time parametrization sampled at the trajectory dt — no stops at waypoints (`trajectory_sampling/with_stops: false`).
+6. **UAV↔UAV collision avoidance** (`trajectory.py`): `delay_till_no_collisions_occur` — vectorized search for the minimal start delay of either UAV (with parked-UAV padding), choosing the option that minimizes the total mission time. Additionally, each UAV plans with a **keepout sphere** around the other UAV's start position (it may be parked there).
+7. **Safety margins**: dynamic constraints scaled by `trajectories/dynamics_safety_factor` (0.95 virtual / 0.90 real world), extra obstacle planning margin, mutual-distance margin — the strict evaluator checks always pass with reserve.
+8. **Self-check**: after planning, the planner verifies its own trajectories against the evaluation criteria (per-axis dynamics, obstacle/mutual distances, final positions, mission time, inspection coverage) and prints an OK/FAIL report.
+
+Local results (identical evaluation logic as `mrim_manager`):
+
+| Problem              | Score | Mission time | Planning time |
+|----------------------|:-----:|:------------:|:-------------:|
+| apocalypse_small     | 8/8   | 27.0 s       | ~5 s          |
+| apocalypse_moderate  | 16/16 | 50.8 s       | ~8 s          |
+| apocalypse_large     | 29/29 | 74.8 s       | ~14 s         |
+
+### Quick testing on any machine (no ROS/Apptainer needed)
+
+A lightweight harness in `local_eval/` runs the real planner code with ROS stubbed out and evaluates the result exactly like `mrim_manager` (score, dynamics, obstacle/mutual distances, final positions):
+
+```bash
+git clone https://github.com/thanhnguyencanh/summer-school-2026.git
+cd summer-school-2026
+./local_eval/setup.sh    # creates local_eval/venv + builds the LKH solver (needs python3-venv, gcc, wget)
+
+# run + evaluate one problem:
+./local_eval/venv/bin/python local_eval/harness/run_planner.py --problem apocalypse_small.problem
+./local_eval/venv/bin/python local_eval/harness/run_planner.py --problem apocalypse_large.problem
+# real-world config pipeline:
+./local_eval/venv/bin/python local_eval/harness/run_planner.py --problem apocalypse_large.problem --config real_world
+# quick parameter experiments without editing configs:
+./local_eval/venv/bin/python local_eval/harness/run_planner.py --problem apocalypse_large.problem --set path_planner/astar/grid_resolution=0.5
+```
+
+The run ends with an `EVALUATION (mrim_manager mirror)` block — everything must be `OK` and `INSPECTED` must equal the number of points. For the full simulation test, use the official flow below (`./install.sh` once, then `./simulation/run_offline.sh`).
+
+### Creating the competition submission
+
+```bash
+cd mrim_task && zip -r team_name.zip mrim_planner
+```
+
+---
+
 ## Installation
 
 The Summer School 2026 will use the [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system) contained in a [Apptainer](https://apptainer.org/) image (previously called Singularity).

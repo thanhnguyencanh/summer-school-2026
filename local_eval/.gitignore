@@ -1,0 +1,5 @@
+venv/
+LKH-2.0.10/
+LKH-2.0.10.tgz
+__pycache__/
+*.pyc

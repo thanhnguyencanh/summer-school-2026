@@ -4,76 +4,9 @@ A-star path planner
 @maintainer: P. Petracek
 """
 
-import itertools, time
-from numpy import sqrt, argmin
+import heapq, math, time
 import numpy as np
-from queue import PriorityQueue
-
-# # #{ class Node
-class Node:
-
-    def __init__(self, pos, route=0, parent=None, goal=None):
-        self.__route  = route
-        self.__pos    = pos
-        self.__parent = parent
-        if goal is not None:
-            self.__goal = goal
-        elif parent is not None:
-            self.__goal = self.parent.goal
-        else:
-            raise Exception("Goal was not specified and the node does not have any parent!")
-        self.__heuristic = self.__heuristicFunction()
-        self.__value     = self.route + self.heuristic
-
-    def __eq__(self, other):
-        return self.value == other.value
-
-    def __ne__(self, other):
-        return self.value != other.value
-
-    def __lt__(self, other):
-        return self.value < other.value
-
-    def __le__(self, other):
-        return self.value <= other.value
-
-    def __gt__(self, other):
-        return self.value > other.value
-
-    def __ge__(self, other):
-        return self.value >= other.value
-
-    @property
-    def value(self):
-        return self.__value
-
-    @property
-    def route(self):
-        return self.__route
-
-    @property
-    def heuristic(self):
-        return self.__heuristic
-
-    @property
-    def parent(self):
-        return self.__parent
-
-    @property
-    def goal(self):
-        return self.__goal
-
-    @property
-    def pos(self):
-        return self.__pos
-
-    def __heuristicFunction(self):
-        a = self.pos[0] - self.goal[0]
-        b = self.pos[1] - self.goal[1]
-        c = self.pos[2] - self.goal[2]
-
-        raise NotImplementedError('[STUDENTS TODO] Heuristic function guiding the state space exploration not implemented. You have to finish it on your own.')
-# # #}
+from numpy import sqrt
 
 # # #{ class AStar
 class AStar():
@@ -81,126 +14,213 @@ class AStar():
     def __init__(self, grid, safety_distance, timeout, straighten=True):
         self.grid            = grid
         self.safety_distance = safety_distance
-        self.neighborhood    = [p for p in itertools.product([0, 1, -1], repeat=3) if not (p[0] == 0 and p[1] == 0 and p[2] == 0)] # 26-neighborhood
         self.straighten      = straighten
         self.timeout         = timeout
 
+        # 26-neighborhood with precomputed step costs
+        self.neighborhood = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    if dx == 0 and dy == 0 and dz == 0:
+                        continue
+                    self.neighborhood.append((dx, dy, dz, math.sqrt(dx * dx + dy * dy + dz * dz)))
+
+        # mild greediness (weighted A*) speeds up the search considerably while the
+        # path straightening removes most of the incurred suboptimality afterwards
+        self.heuristic_weight = 1.1
+
+    # # #{ dist()
     def dist(self, first, second):
         a = first[0] - second[0]
         b = first[1] - second[1]
         c = first[2] - second[2]
-        return sqrt(a**2 + b**2 + c**2)
+        return math.sqrt(a**2 + b**2 + c**2)
+    # # #}
 
-    def halveAndTest(self, path):
-        pt1 = path[0]
-        pt2 = path[-1]
-        
-        if len(path) <= 2:
-            return path
+    # # #{ nearestFreeCell()
+    def nearestFreeCell(self, idx, max_radius=10):
+        '''
+        Returns the given cell if it is free, otherwise the nearest free cell within
+        max_radius cells (or None if no free cell is found).
+        '''
+        occ  = self.occ
+        dims = occ.shape
 
-        raise NotImplementedError('[STUDENTS TODO] A*: path straightening is not finished. Finish it on your own.')
-        # Tips:
-        #  - divide the given path by a certain ratio and use this method recursively
+        idx = tuple(int(np.clip(idx[i], 0, dims[i] - 1)) for i in range(3))
 
-        if self.grid.obstacleBetween(pt1, pt2):
+        if not occ[idx]:
+            return idx
 
-            # [STUDENTS TODO] Replace seg1 and seg2 variables effectively
-            seg1 = path[:1]
-            seg2 = path[1:]
+        for r in range(1, max_radius + 1):
+            x0, x1 = max(0, idx[0] - r), min(dims[0], idx[0] + r + 1)
+            y0, y1 = max(0, idx[1] - r), min(dims[1], idx[1] + r + 1)
+            z0, z1 = max(0, idx[2] - r), min(dims[2], idx[2] + r + 1)
 
-            seg1.extend(seg2)
-            return seg1
-        
-        return [pt1, pt2]
+            free = np.argwhere(~occ[x0:x1, y0:y1, z0:z1])
+            if free.size:
+                cells = free + np.array([x0, y0, z0])
+                d2    = np.sum((cells - np.array(idx))**2, axis=1)
+                return tuple(int(v) for v in cells[int(np.argmin(d2))])
 
+        return None
+    # # #}
+
+    # # #{ generatePath()
     def generatePath(self, m_start, m_goal):
-        
+
         print("[INFO] A*: Searching for path from [{:.2f}, {:.2f}, {:.2f}] to [{:.2f}, {:.2f}, {:.2f}].".format(m_start[0], m_start[1], m_start[2], m_goal[0], m_goal[1], m_goal[2]))
+
+        self.occ = np.asarray(self.grid.array, dtype=bool)
 
         start = self.grid.metricToIndex(m_start)
         goal  = self.grid.metricToIndex(m_goal)
 
-        node = self.searchPath(start, goal)
-        path = []
-        path_m = []
-        if node is None:
+        # snap the endpoints to the nearest free cells (the exact metric endpoints are restored below)
+        start = self.nearestFreeCell(start)
+        goal  = self.nearestFreeCell(goal)
+
+        if start is None or goal is None:
+            print("[ERROR] A*: start or goal cell is occupied and there is no free cell nearby!")
+            return None, None
+
+        path = self.searchPath(start, goal)
+
+        if path is None:
             print("[ERROR] A* did not find any path!")
             return None, None
+
+        if self.straighten:
+            path = self.halveAndTest(path)
+            path = self.greedyShortcut(path)
+
+        path_m = [self.grid.indexToMetric(node) for node in path]
+
+        # replace the path endpoints with the exact metric coordinates (incl. headings)
+        start_hdg = m_start[3] if len(m_start) > 3 else None
+        goal_hdg  = m_goal[3]  if len(m_goal)  > 3 else None
+
+        path_m[0] = (m_start[0], m_start[1], m_start[2], start_hdg)
+        if len(path_m) > 1:
+            path_m[-1] = (m_goal[0], m_goal[1], m_goal[2], goal_hdg)
         else:
-            while node.parent:
-                path.append(node.pos)
-                node = node.parent
-            path.append(start)
-            if self.straighten:
-                path = self.halveAndTest(path)
-            path.reverse()
-            for node in path:
-                path_m.append(self.grid.indexToMetric(node))
-            # keep goal as last point in path independently on resolution
-            # path_m.append(m_goal)
+            path_m.append((m_goal[0], m_goal[1], m_goal[2], goal_hdg))
 
         distance = 0.0
         for i in range(1, len(path_m)):
             distance += self.dist(path_m[i - 1], path_m[i])
 
-        # keep heading of first point
-        path_m[0] = (path_m[0][0], path_m[0][1], path_m[0][2], m_start[3]) 
-
         return path_m, distance
+    # # #}
 
+    # # #{ searchPath()
     def searchPath(self, start, goal):
-        start_node    = Node(start, goal=goal)
-        # Initialize queue to hold open nodes
-        open_queue    = PriorityQueue()
-        # Initialize grid for fast lookup of best node value to positive infinity
-        priority_grid = np.full(self.grid.dim,np.inf)
-
-        open_queue.put(start_node)
 
         start_time = time.time()
 
-        while True:
-            if open_queue.empty():
-                print("[ERROR] A*: open node queue is empty, could not find path!")
-                return None
+        occ  = self.occ
+        dims = occ.shape
 
-            best_node = open_queue.get()
+        g_grid = np.full(dims, np.inf, dtype=np.float64)
+        closed = np.zeros(dims, dtype=bool)
 
-            if best_node.heuristic <= 0:
-                break
+        gx, gy, gz = goal
+        w          = self.heuristic_weight
 
-            best_node_pos = best_node.pos
-            # Throw away node if it was already opened with better value
-            if priority_grid[best_node_pos] <= best_node.value:
+        g_grid[start] = 0.0
+        came          = {}
+        heap          = [(w * self.dist(start, goal), start)]
+
+        pops = 0
+        while heap:
+
+            f, pos = heapq.heappop(heap)
+
+            if pos == goal:
+                # reconstruct the path from goal to start
+                path = [pos]
+                while pos in came:
+                    pos = came[pos]
+                    path.append(pos)
+                path.reverse()
+                return path
+
+            if closed[pos]:
                 continue
-            # Assign best found node value to the lookup grid
-            priority_grid[best_node_pos] = best_node.value
+            closed[pos] = True
 
-            # Find all neighbors of the node
-            neighbors = self.neighbors(best_node_pos)
-            nodes     = [Node(n, best_node.route + self.dist(best_node.pos, n), best_node, goal) for n in neighbors]
-
-            for n in nodes:
-                # Add neighbors to queue if their value is better than previously opened
-                if priority_grid[n.pos] <= n.value:
-                    continue
-                open_queue.put(n)
-
-            if time.time() - start_time > self.timeout:
+            pops += 1
+            if pops % 2048 == 0 and time.time() - start_time > self.timeout:
                 print("[ERROR] A*: Timeout limit in searchPath() exceeded ({:.1f} s > {:.1f} s). Ending.".format(time.time() - start_time, self.timeout))
                 return None
-            
-        return best_node
 
-    def neighbors(self, pos):
-        # Check grid bounds and obstacles for all neighbors of node
-        neigh = []
-        for n in self.neighborhood:
-            idx = (pos[0] + n[0], pos[1] + n[1], pos[2] + n[2])
-            if 0 <= idx[0] < self.grid.dim[0] and\
-               0 <= idx[1] < self.grid.dim[1] and\
-               0 <= idx[2] < self.grid.dim[2] and not\
-               self.grid.idxIsOccupied(idx):
-                    neigh.append(idx)
-        return map(tuple, neigh)
+            x, y, z = pos
+            g_pos   = g_grid[pos]
+
+            for dx, dy, dz, c in self.neighborhood:
+                nx, ny, nz = x + dx, y + dy, z + dz
+
+                if nx < 0 or ny < 0 or nz < 0 or nx >= dims[0] or ny >= dims[1] or nz >= dims[2]:
+                    continue
+
+                npos = (nx, ny, nz)
+                if occ[npos] or closed[npos]:
+                    continue
+
+                ng = g_pos + c
+                if ng < g_grid[npos]:
+                    g_grid[npos] = ng
+                    came[npos]   = pos
+
+                    # Euclidean distance to goal: admissible and consistent heuristic
+                    h = math.sqrt((nx - gx)**2 + (ny - gy)**2 + (nz - gz)**2)
+                    heapq.heappush(heap, (ng + w * h, npos))
+
+        print("[ERROR] A*: open node queue is empty, could not find path!")
+        return None
+    # # #}
+
+    # # #{ halveAndTest()
+    def halveAndTest(self, path):
+        '''
+        Recursively straightens the path: if the straight connection of the path endpoints
+        is collision-free, the path is replaced by it; otherwise, the path is divided in
+        half and both halves are straightened recursively.
+        '''
+        if len(path) <= 2:
+            return path
+
+        pt1 = path[0]
+        pt2 = path[-1]
+
+        if self.grid.obstacleBetween(pt1, pt2):
+            mid  = len(path) // 2
+            seg1 = self.halveAndTest(path[:mid + 1])
+            seg2 = self.halveAndTest(path[mid:])
+            return seg1[:-1] + seg2
+
+        return [pt1, pt2]
+    # # #}
+
+    # # #{ greedyShortcut()
+    def greedyShortcut(self, path):
+        '''
+        Greedy forward pass over the (already straightened) path: from each node, jump to
+        the farthest node visible in a straight, collision-free line.
+        '''
+        if len(path) <= 2:
+            return path
+
+        out = [path[0]]
+        i   = 0
+        while i < len(path) - 1:
+            j = len(path) - 1
+            while j > i + 1 and self.grid.obstacleBetween(path[i], path[j]):
+                j -= 1
+            out.append(path[j])
+            i = j
+
+        return out
+    # # #}
+
 # # #}
