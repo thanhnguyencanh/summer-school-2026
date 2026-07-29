@@ -349,11 +349,18 @@ class TSPSolver3D():
         if n <= 3:
             return list(range(n))
 
-        fname_tsp = "problem"
-        user_comment = "a comment by the user"
-        self.lkh.writeTSPLIBfile_FE(fname_tsp, self.distances, user_comment)
-        self.lkh.run_LKHsolver_cmd(fname_tsp, silent=True)
-        sequence = self.lkh.read_LKHresult_cmd(fname_tsp)
+        try:
+            fname_tsp = "problem"
+            user_comment = "a comment by the user"
+            self.lkh.writeTSPLIBfile_FE(fname_tsp, self.distances, user_comment)
+            self.lkh.run_LKHsolver_cmd(fname_tsp, silent=True)
+            sequence = self.lkh.read_LKHresult_cmd(fname_tsp)
+        except Exception as e:
+            # LKH failed (missing binary, I/O error, ...): fall back to the built-in
+            # nearest-neighbor + 2-opt solver rather than killing the whole mission
+            print('[WARN] compute_tsp_sequence(): LKH failed ({:s}), falling back to the built-in 2-opt solver.'.format(str(e)))
+            _, sequence = self._solveSmallTSP(self.distances)
+            return sequence
 
         if len(sequence) > 0 and sequence[0] is not None:
             for i in range(len(sequence)):

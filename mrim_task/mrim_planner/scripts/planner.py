@@ -268,6 +268,18 @@ class MrimPlanner:
                                                                            velocity_limits=constraints_velocity,
                                                                            acceleration_limits=constraints_acceleration)
 
+            # safety net: if the continuous sampling failed (e.g., TOPPRA could not
+            # parametrize the path), retry with the always-feasible stop-at-waypoints
+            # sampling instead of producing no trajectory at all
+            if trajectory is None and not self._sample_with_stops:
+                print('[SAMPLING TRAJECTORY] Continuous sampling failed, falling back to stop-at-waypoints sampling.')
+                trajectory = Trajectory(self._trajectory_dt, waypoints[r])
+                trajectory = trajectory_utils.sampleTrajectoryThroughWaypoints(trajectory, with_stops=True,\
+                                                                               smooth_path=False, smoothing_la_dist=self._smoothing_distance,\
+                                                                               smoothing_sampling_step=self._smoothing_sampling_step,\
+                                                                               velocity_limits=constraints_velocity,
+                                                                               acceleration_limits=constraints_acceleration)
+
             if trajectory is None:
                 rospy.logerr('Unable to sample trajectory through waypoints. Read the log output to find out why.')
                 rospy.signal_shutdown('Unable to sample trajectory through waypoints. Read the log output to find out why.');

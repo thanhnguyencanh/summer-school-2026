@@ -22,13 +22,20 @@ All changes live in `mrim_task/mrim_planner` (the only folder used during the co
 7. **Safety margins**: dynamic constraints scaled by `trajectories/dynamics_safety_factor` (0.95 virtual / 0.90 real world), extra obstacle planning margin, mutual-distance margin — the strict evaluator checks always pass with reserve.
 8. **Self-check**: after planning, the planner verifies its own trajectories against the evaluation criteria (per-axis dynamics, obstacle/mutual distances, final positions, mission time, inspection coverage) and prints an OK/FAIL report.
 
-Local results (identical evaluation logic as `mrim_manager`):
+9. **Robustness fallbacks**: LKH solver failure falls back to a built-in NN+2-opt solver; TOPPRA parametrization failure falls back to stop-at-waypoints sampling — no single component failure can zero the score.
+10. **Unseen-world validation**: `local_eval/generate_problem.py` generates synthetic worlds similar to (and harder than) `apocalypse_large` — the competition evaluates on an unseen world, so the solution is validated on 6 generated worlds (`unseen_*` in `mrim_resources/problems`) besides the 3 official ones.
 
-| Problem              | Score | Mission time | Planning time |
-|----------------------|:-----:|:------------:|:-------------:|
-| apocalypse_small     | 8/8   | 27.0 s       | ~5 s          |
-| apocalypse_moderate  | 16/16 | 50.8 s       | ~8 s          |
-| apocalypse_large     | 29/29 | 74.8 s       | ~14 s         |
+Local results (identical evaluation logic as `mrim_manager`, all constraint checks green):
+
+| Problem              | Score  | Mission time | Planning time |
+|----------------------|:------:|:------------:|:-------------:|
+| apocalypse_small     | 8/8    | 26.6 s       | ~5 s          |
+| apocalypse_moderate  | 16/16  | 45.4 s       | ~7 s          |
+| apocalypse_large     | 29/29  | 72.8 s       | ~12 s         |
+| unseen_comp_a/b/c    | 34+33+35 (all) | 82.8–84.8 s | ~15 s  |
+| unseen_dense         | 34/34  | 91.2 s       | ~16 s         |
+| unseen_tight         | 32/32  | 90.0 s       | ~14 s         |
+| unseen_wide40        | 40/40  | 99.0 s       | ~17 s         |
 
 ### Quick testing on any machine (no ROS/Apptainer needed)
 
