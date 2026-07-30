@@ -93,7 +93,17 @@ class MrimPlanner:
         self._shell_dp                             = rospy.get_param('~tsp/shell_dp/enabled', False)
         self._path_planner['shell_dp']             = self._shell_dp
         self._path_planner['shell_dp/cone_angle']  = rospy.get_param('~tsp/shell_dp/cone_angle', 0.55)
+        self._path_planner['shell_dp/radius_slack']  = rospy.get_param('~tsp/shell_dp/radius_slack', 0.0)
+        self._path_planner['shell_dp/heading_slack'] = rospy.get_param('~tsp/shell_dp/heading_slack', 0.0)
         self._path_planner['viewpoints_distance']  = self._viewpoints_distance
+
+        # evaluation limit on the obstacle distance (nominal viewpoints violating it
+        # are relocated on their tolerance spheres by the shell-pose optimization)
+        self._path_planner['eval_obstacle_limit'] = rospy.get_param('~trajectories/check/obstacles', 1.5)
+
+        # last-resort safety net state: viewpoints sacrificed to avoid a zero score
+        self._exclude_vp_idxs = set()
+        self._dropped_vp_count = 0
 
         # clearance-aware corner rounding during path smoothing
         self._corner_arcs       = rospy.get_param('~path_smoothing/corner_arcs', False)
@@ -183,6 +193,10 @@ class MrimPlanner:
             # get robot ID
             robot_id = problem.robot_ids[r]
             for ip in problem.inspection_points:
+
+                # viewpoints sacrificed by the last-resort safety net
+                if ip.idx in self._exclude_vp_idxs:
+                    continue
 
                 # convert IP to VP [id x y z heading]
                 viewpoint = inspectionPointToViewPoint(ip, self._viewpoints_distance)
@@ -339,14 +353,44 @@ class MrimPlanner:
         try:
             result = self.selfCheck(problem, viewpoints, trajectories)
 
-            # SAFETY NET: if the enhanced pipeline produced an invalid or incomplete
-            # solution, replan once with all the aggressive features disabled (that
-            # configuration is extensively validated to yield a full score)
+            # SAFETY NET (stage 1): the inspection-tolerance slacks are the most
+            # aggressive feature -- retry with zero slacks first, keeping the
+            # shell-pose optimization and the relocation of unsafe viewpoints
+            if not result['valid'] and self._shell_dp and \
+                    (self._path_planner.get('shell_dp/radius_slack', 0.0) > 0.0 or self._path_planner.get('shell_dp/heading_slack', 0.0) > 0.0):
+                print('[SELF-CHECK] solution invalid, replanning with zero inspection-tolerance slacks!')
+                self._path_planner['shell_dp/radius_slack']  = 0.0
+                self._path_planner['shell_dp/heading_slack'] = 0.0
+                return self.planTrajectories(problem)
+
+            # SAFETY NET (stage 2): still invalid -- replan with all the aggressive
+            # features disabled (that configuration is extensively validated to
+            # yield a full score)
             if not result['valid'] and (self._shell_dp or self._corner_arcs):
                 print('[SELF-CHECK] solution invalid with enhancements enabled, replanning conservatively!')
                 self._shell_dp     = False
                 self._corner_arcs  = False
                 return self.planTrajectories(problem)
+
+            # LAST-RESORT NET: still invalid due to a too-small obstacle distance
+            # (e.g., an inspection point whose whole tolerance sphere is unsafe).
+            # Sacrifice the viewpoint nearest to the deepest violation and replan:
+            # losing one inspection beats the zero score for the whole mission.
+            if not result['valid'] and result['obstacle_violations'] and self._dropped_vp_count < 3:
+                _, _, viol_pos = result['obstacle_violations'][0]
+                nearest = None
+                for rr in range(len(viewpoints)):
+                    for vp in viewpoints[rr]:
+                        if vp.idx == 0:
+                            continue
+                        d = np.linalg.norm(np.array(vp.pose.point.asList()) - viol_pos)
+                        if nearest is None or d < nearest[0]:
+                            nearest = (d, vp.idx)
+                if nearest is not None:
+                    print('[SELF-CHECK] dropping viewpoint of IP {:d} (nearest to the obstacle violation) and replanning!'.format(nearest[1]))
+                    self._exclude_vp_idxs.add(nearest[1])
+                    self._dropped_vp_count += 1
+                    return self.planTrajectories(problem)
 
         except Exception as e:
             print('[SELF-CHECK] failed with exception: {:s}'.format(str(e)))
@@ -430,13 +474,19 @@ class MrimPlanner:
             except ImportError:
                 CheckKDTree = None
 
+        obstacle_violations = []
         if CheckKDTree is not None and problem.number_of_obstacle_points > 0:
             obst_tree = CheckKDTree(np.array([[o.x, o.y, o.z] for o in problem.obstacle_points]))
             for r in range(len(trajectories)):
-                d_min = float(np.min(obst_tree.query(xyzs[r], k=1)[0]))
+                dists  = obst_tree.query(xyzs[r], k=1)[0]
+                k_min  = int(np.argmin(dists))
+                d_min  = float(dists[k_min])
                 all_ok = all_ok and d_min > check_obst_dist
+                if d_min <= check_obst_dist:
+                    obstacle_violations.append((d_min, r, xyzs[r][k_min]))
                 print('[SELF-CHECK] [{:s}] UAV {:d} min obstacle distance: {:.2f} m (limit {:.2f})'.format(
                     'OK' if d_min > check_obst_dist else 'FAIL', problem.robot_ids[r], d_min, check_obst_dist))
+        obstacle_violations.sort(key=lambda v: v[0])
 
         ## | -------------------- mutual distances -------------------- |
         if len(trajectories) == 2:
@@ -489,7 +539,8 @@ class MrimPlanner:
 
         all_ok = all_ok and n_ok == n_vps
 
-        return {'valid': all_ok, 'n_inspected': n_ok, 'n_assigned': n_vps, 'mission_time': t_mission}
+        return {'valid': all_ok, 'n_inspected': n_ok, 'n_assigned': n_vps, 'mission_time': t_mission,
+                'obstacle_violations': obstacle_violations}
     # # #}
 
 if __name__ == '__main__':

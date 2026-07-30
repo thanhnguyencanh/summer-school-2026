@@ -15,7 +15,9 @@ tsp:
   # errors eat into the tolerance margins)
   shell_dp:
     enabled: true
-    cone_angle: 0.45 # (rad) half-angle of the candidate cone around the nominal viewpoint direction
+    cone_angle: 0.45    # (rad) half-angle of the candidate cone around the nominal viewpoint direction
+    radius_slack: 0.0   # keep the exact radius/heading in the real world: the actual UAV pose is
+    heading_slack: 0.0  # evaluated and the tracking errors need the full inspection tolerances
 
 # Parameters for path planning
 path_planner:

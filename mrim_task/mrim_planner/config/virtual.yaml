@@ -1,5 +1,5 @@
 problem:
-  name: "apocalypse_moderate.problem" # [apocalypse_small.problem, apocalypse_moderate.problem, apocalypse_large.problem]
+  name: "apocalypse_small.problem" # [apocalypse_small.problem, apocalypse_moderate.problem, apocalypse_large.problem]
   plot: False
 
 # Parameters for Traveling Salesman Problem
@@ -11,11 +11,15 @@ tsp:
   detour_penalty: 1.5                  # Cost multiplier of obstructed straight-line connections in the flight time estimates
 
   # Optimization of the inspection poses on the tolerance shells: for the fixed tour
-  # sequence, pick the time-optimal pose on each inspection sphere (exact radius and
-  # heading are kept, only the position on the sphere varies within the cone)
+  # sequence, pick the time-optimal pose on each inspection sphere within the cone.
+  # The slacks spend a part of the inspection tolerances (dist 0.3 m, heading 0.2 rad)
+  # to shorten the tour; the rest is kept as margin (virtual challenge tracks the
+  # reference exactly, so a small slack is safe -- validated by the self-check)
   shell_dp:
     enabled: true
-    cone_angle: 0.55 # (rad) half-angle of the candidate cone around the nominal viewpoint direction
+    cone_angle: 0.55    # (rad) half-angle of the candidate cone around the nominal viewpoint direction
+    radius_slack: 0.2   # (m) allowed deviation from the nominal inspection radius (tolerance 0.3)
+    heading_slack: 0.15 # (rad) allowed deviation from the nominal inspection heading (tolerance 0.2)
 
 # Parameters for path planning
 path_planner:

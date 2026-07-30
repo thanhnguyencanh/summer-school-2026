@@ -19,19 +19,23 @@ All changes live in [mrim_task/mrim_planner](mrim_task/mrim_planner) (the only f
 9. **Robustness fallbacks** — LKH failure → built-in 2-opt; TOPPRA failure → stop-at-waypoints sampling; A\* failure → RRT. No single failure can zero the score.
 10. **Unseen-world validation** — [local_eval/generate_problem.py](local_eval/generate_problem.py) generates worlds similar to (and harder than) `apocalypse_large`; the solution is validated on 6 such worlds besides the 3 official ones.
 
-11. **Shell-pose optimization (DP)** — for the fixed tour order, the actual inspection pose of every IP is chosen on its tolerance sphere (exact radius + exact heading kept as margin, position varies within a cone around the nominal viewpoint direction) by dynamic programming over flight-time estimates — each UAV approaches every IP from the direction it is already flying (`tsp/shell_dp`). Validated with an automatic safety net: if the planner's self-check finds any violation or a missed inspection, it replans once with the aggressive features disabled.
+11. **Shell-pose optimization (DP)** — for the fixed tour order, the actual inspection pose of every IP is chosen on its tolerance sphere by dynamic programming over flight-time estimates, so each UAV approaches every IP from the direction it is already flying (`tsp/shell_dp`). In the virtual challenge a controlled part of the inspection tolerances is spent as well (`radius_slack` 0.2 of the 0.3 m distance tolerance, `heading_slack` 0.15 of the 0.2 rad heading tolerance) — the reference is tracked exactly there; in the real-world config both slacks are 0 (tracking errors need the full tolerances).
+12. **Unsafe-viewpoint relocation** — if a *nominal* viewpoint is closer to an obstacle than the evaluation limit (possible when an IP faces another structure — flying there would zero the whole score), the whole tolerance sphere is searched and the inspection is performed from a safe pose instead.
+13. **Escalating safety net** — the planner self-checks every zero-score condition; on any failure it replans with zero slacks first (keeping the DP + relocation), then with all aggressive features disabled, and as a last resort sacrifices the viewpoint nearest to an obstacle violation (max 3) — one lost point always beats a zeroed mission.
 
 ### Results (evaluation logic identical to mrim_manager, all checks green)
 
 | Problem | Score | Mission time | Planning time |
 |---|:---:|:---:|:---:|
-| apocalypse_small | 8/8 | 25.4 s | ~6 s |
-| apocalypse_moderate | 16/16 | 44.8 s | ~8 s |
-| apocalypse_large | 29/29 | 67.4 s | ~13 s |
-| unseen_comp_a/b/c | 34+33+35 (all) | 75.4–79.6 s | ~15 s |
-| unseen_dense | 34/34 | 86.0 s | ~16 s |
-| unseen_tight | 32/32 | 84.0 s | ~15 s |
-| unseen_wide40 | 40/40 | 87.0 s | ~16 s |
+| apocalypse_small | 8/8 | 25.0 s | ~6 s |
+| apocalypse_moderate | 16/16 | 44.4 s | ~8 s |
+| apocalypse_large | 29/29 | 66.6 s | ~13 s |
+| unseen_comp_a/b/c | 34+33+35 (all) | 75.8–78.8 s | ~15 s |
+| unseen_dense | 34/34 | 85.6 s | ~16 s |
+| unseen_tight | 32/32 | 85.0 s | ~15 s |
+| unseen_wide40 | 40/40 | 86.4 s | ~16 s |
+
+With the `real_world` config (3/3/1 m/s dynamics, 2.0/4.0 m distances, VP distance 5.0 m): apocalypse_large 29/29 @ 119.6 s, unseen_dense 34/34 @ 141.0 s (2 unsafe viewpoints auto-relocated — without relocation this world zero-scores), unseen_tight 32/32 @ 131.0 s, unseen_wide40 40/40 @ 148.2 s (1 viewpoint relocated).
 
 (Official `mrim_manager` in the Apptainer container reproduces these numbers exactly.)
 

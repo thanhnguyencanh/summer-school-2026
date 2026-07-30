@@ -367,8 +367,10 @@ class TSPSolver3D():
             tour_poses (list[Pose]): chosen pose for each tour position (start first)
         '''
 
-        vp_dist    = path_planner.get('viewpoints_distance', 4.0)
-        cone_angle = path_planner.get('shell_dp/cone_angle', 0.55)
+        vp_dist       = path_planner.get('viewpoints_distance', 4.0)
+        cone_angle    = path_planner.get('shell_dp/cone_angle', 0.55)
+        radius_slack  = path_planner.get('shell_dp/radius_slack', 0.0)
+        heading_slack = path_planner.get('shell_dp/heading_slack', 0.0)
 
         n = len(sequence)
 
@@ -377,13 +379,13 @@ class TSPSolver3D():
         for k in range(1, n):
             vp = viewpoints[sequence[k]]
             ip = self._ip_by_idx.get(vp.idx)
-            layers.append(self.shellCandidates(vp, ip, vp_dist, cone_angle, path_planner))
+            layers.append(self.shellCandidates(vp, ip, vp_dist, cone_angle, path_planner,
+                                               radius_slack=radius_slack, heading_slack=heading_slack))
 
-        # positions as arrays for the vectorized transition costs
-        arrays = [np.array([[p.point.x, p.point.y, p.point.z] for p in layer]) for layer in layers]
-
-        # heading of each layer (constant within a layer)
-        headings = [layer[0].heading for layer in layers]
+        # positions and headings as arrays for the vectorized transition costs
+        # (with heading slack the headings vary within a layer; undefined -> nan)
+        arrays   = [np.array([[p.point.x, p.point.y, p.point.z] for p in layer]) for layer in layers]
+        headings = [np.array([np.nan if p.heading is None else p.heading for p in layer]) for layer in layers]
 
         (v_x, v_y, v_z), (a_x, a_y, a_z), hdg_rate = path_planner['dynamics']
 
@@ -396,11 +398,12 @@ class TSPSolver3D():
 
             T = self._pairTimeMatrix(src, dst, (v_x, v_y, v_z), (a_x, a_y, a_z))
 
-            # the heading-rotation time is a lower bound common to all candidate pairs
+            # the heading-rotation time is a lower bound on each pairwise transition
             h_from = headings[k - 1]
             h_to   = headings[k] if k < n else headings[0]
-            if h_from is not None and h_to is not None and hdg_rate > 1e-3:
-                T = np.maximum(T, abs(angleDiff(h_from, h_to)) / hdg_rate)
+            if hdg_rate > 1e-3 and not (np.any(np.isnan(h_from)) or np.any(np.isnan(h_to))):
+                d_hdg = np.abs((h_to[None, :] - h_from[:, None] + np.pi) % (2.0 * np.pi) - np.pi)
+                T     = np.maximum(T, d_hdg / hdg_rate)
 
             total     = costs[-1][:, None] + T
             parent    = np.argmin(total, axis=0)
@@ -422,12 +425,15 @@ class TSPSolver3D():
 
     # #{ shellCandidates()
 
-    def shellCandidates(self, vp, ip, vp_dist, cone_angle, path_planner):
+    def shellCandidates(self, vp, ip, vp_dist, cone_angle, path_planner, radius_slack=0.0, heading_slack=0.0):
         '''
         Generates collision-free candidate poses on the inspection-tolerance shell
-        of the given viewpoint: points on the sphere of the exact nominal radius
-        around the inspection point, within a cone around the nominal viewpoint
-        direction, all with the exact inspection heading.
+        of the given viewpoint: points within a cone around the nominal viewpoint
+        direction on spheres of radius vp_dist (+- radius_slack) around the
+        inspection point, with the inspection heading (+- heading_slack).
+
+        With zero slacks the exact nominal radius and heading are kept and the
+        full inspection tolerances remain as safety margin.
         '''
 
         nominal = Pose(vp.pose.point.x, vp.pose.point.y, vp.pose.point.z, vp.pose.heading)
@@ -449,24 +455,46 @@ class TSPSolver3D():
         e1 /= np.linalg.norm(e1)
         e2  = np.cross(axis, e1)
 
+        # if the nominal viewpoint itself violates the evaluation obstacle limit
+        # (possible in problems where an inspection point faces another obstacle),
+        # flying through it would zero the whole score: search the entire
+        # tolerance sphere for a safe pose and exclude the nominal
+        eval_limit    = path_planner.get('eval_obstacle_limit', 0.0)
+        nominal_clear = float(path_planner['obstacles_kdtree'].query(vp_pos, k=1)[0])
+        relocate      = nominal_clear <= eval_limit + 0.05
+
         # rings of directions around the nominal axis
+        alphas = [0.5 * cone_angle, cone_angle]
+        if relocate:
+            alphas += list(np.arange(cone_angle + 0.35, 2.61, 0.45))
+
         dirs = [axis]
-        for alpha in (0.5 * cone_angle, cone_angle):
-            for az in np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False):
+        for alpha in alphas:
+            for az in np.linspace(0.0, 2.0 * np.pi, 12 if relocate else 8, endpoint=False):
                 d = np.cos(alpha) * axis + np.sin(alpha) * (np.cos(az) * e1 + np.sin(az) * e2)
                 dirs.append(d / np.linalg.norm(d))
+        dirs = np.vstack(dirs)
 
-        positions = ip_pos + vp_dist * np.vstack(dirs)
+        # concentric shells within the allowed part of the distance tolerance
+        radii = [vp_dist]
+        if radius_slack > 1e-6:
+            radii = [vp_dist - radius_slack, vp_dist, vp_dist + radius_slack]
+        positions = np.vstack([ip_pos + r * dirs for r in radii])
+
+        # heading options within the allowed part of the heading tolerance
+        hdg_opts = [nominal.heading]
+        if heading_slack > 1e-6:
+            hdg_opts = [wrapAngle(nominal.heading + o) for o in (-heading_slack, 0.0, heading_slack)]
 
         # filter the candidates: obstacle clearance, bounds, keepout zones
-        candidates = [nominal]
+        candidates = []
         safety     = path_planner['safety_distance']
         bounds     = path_planner.get('bounds')
         keepouts   = path_planner.get('extra_keepout', [])
 
         clearances, _ = path_planner['obstacles_kdtree'].query(positions, k=1)
 
-        for i in range(1, len(positions)):
+        for i in range(len(positions)):
             p = positions[i]
             if clearances[i] <= safety:
                 continue
@@ -474,7 +502,17 @@ class TSPSolver3D():
                 continue
             if any(np.linalg.norm(p - np.array(kp[0:3])) < kp[3] + 0.3 for kp in keepouts):
                 continue
-            candidates.append(Pose(float(p[0]), float(p[1]), float(p[2]), nominal.heading))
+            for h in hdg_opts:
+                candidates.append(Pose(float(p[0]), float(p[1]), float(p[2]), h))
+
+        # the nominal pose is kept unless it must be relocated and a safe
+        # alternative exists (with no candidates the DP has nothing to choose from)
+        if not relocate or len(candidates) == 0:
+            if relocate:
+                print('[WARN] shellCandidates(): nominal viewpoint of IP {:d} has obstacle clearance {:.2f} m and no safe pose exists on its tolerance sphere.'.format(vp.idx, nominal_clear))
+            candidates.insert(0, nominal)
+        else:
+            print('[SHELL DP] relocating viewpoint of IP {:d}: nominal obstacle clearance {:.2f} m <= evaluation limit {:.2f} m.'.format(vp.idx, nominal_clear, eval_limit))
 
         return candidates
 
