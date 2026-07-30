@@ -26,8 +26,9 @@ class MrimPlanner:
         problem_filename = rospy.get_param('~problem/name')
         session_problem = rospy.get_param('~session_problem')
 
-        # prefer the session-defined problem if provided
-        if session_problem is not None and len(str(session_problem)) > 0:
+        # prefer the session-defined problem if it is an actual problem file
+        # (the launch scripts also pass run-type tags like 'offline' here)
+        if session_problem is not None and str(session_problem).endswith('.problem'):
             print('[MrimPlanner] Using session problem: {:s}'.format(str(session_problem)))
             problem_filename = str(session_problem)
 
