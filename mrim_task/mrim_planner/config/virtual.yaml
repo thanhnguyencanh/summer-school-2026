@@ -1,5 +1,5 @@
 problem:
-  name: "unseen_dense.problem" # [apocalypse_small.problem, apocalypse_moderate.problem, apocalypse_large.problem]
+  name: "apocalypse_moderate.problem" # [apocalypse_small.problem, apocalypse_moderate.problem, apocalypse_large.problem]
   plot: False
 
 # Parameters for Traveling Salesman Problem
@@ -9,6 +9,13 @@ tsp:
   balance_viewpoints: true             # Re-balance the shared viewpoints between the UAVs to minimize the makespan
   balance_time_budget: 20.0            # (s) maximum time spent by the balancing
   detour_penalty: 1.5                  # Cost multiplier of obstructed straight-line connections in the flight time estimates
+
+  # Optimization of the inspection poses on the tolerance shells: for the fixed tour
+  # sequence, pick the time-optimal pose on each inspection sphere (exact radius and
+  # heading are kept, only the position on the sphere varies within the cone)
+  shell_dp:
+    enabled: true
+    cone_angle: 0.55 # (rad) half-angle of the candidate cone around the nominal viewpoint direction
 
 # Parameters for path planning
 path_planner:
@@ -36,6 +43,8 @@ path_smoothing:
   sampling_step: 0.4      # (m) If horizontal constraints are not satisfied, TOPPRA might have returned infeasible trajectory due to too small sampling step
   lookahead_dist: 0.8     # (m) Lookahead distance for path smoothing
   heading_hold_dist: 0.6  # (m) Distance along the path around the viewpoints in which the heading is held constant
+  corner_arcs: false      # EXPERIMENTAL, keep disabled: arc corner-rounding measured slower than the lookahead smoother (arcs rejected near obstacles pin the spline tighter)
+  corner_arc_radius: 4.0  # (m) maximum corner arc radius
 
 # Parameters for sampling the UAVs' trajectories
 trajectory_sampling:

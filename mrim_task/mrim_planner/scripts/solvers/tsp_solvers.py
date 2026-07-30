@@ -105,6 +105,9 @@ class TSPSolver3D():
         # Setup 3D grid for grid-based planners and KDtree for sampling-based planners
         self.setup(problem, path_planner, viewpoints)
 
+        # inspection points by index (needed by the shell-pose optimization)
+        self._ip_by_idx = {ip.idx: ip for ip in problem.inspection_points}
+
         n              = len(viewpoints)
         self.distances = np.zeros((n, n))
         self.paths = {}
@@ -308,28 +311,203 @@ class TSPSolver3D():
         # compute the shortest sequence given the distance matrix
         sequence = self.compute_tsp_sequence()
 
+        n = len(self.distances)
+
+        # choose the actual inspection poses: either the nominal viewpoints, or
+        # (with shell_dp enabled) the time-optimal poses on the inspection
+        # tolerance shells found by dynamic programming along the fixed sequence
+        shell_dp = bool(path_planner.get('shell_dp', False))
+        if shell_dp:
+            tour_poses = self.optimizeShellPoses(viewpoints, sequence, path_planner)
+        else:
+            tour_poses = [viewpoints[idx].pose for idx in sequence]
+
         path = []
-        n    = len(self.distances)
 
         for a in range(n):
-            b     = (a + 1) % n
-            a_idx = sequence[a]
-            b_idx = sequence[b]
+            b = (a + 1) % n
 
-            # if the paths are already computed
-            if path_planner['distance_estimation_method'] == path_planner['path_planning_method']:
-                actual_path = self.paths[(a_idx, b_idx)]
-            # if the path planning and distance estimation methods differ, we need to compute the path
+            # if the paths are already computed (and the tour poses are the nominal viewpoints)
+            if not shell_dp and path_planner['distance_estimation_method'] == path_planner['path_planning_method']:
+                actual_path = self.paths[(sequence[a], sequence[b])]
+            # otherwise, plan the leg between the chosen tour poses
             else:
-                actual_path, _ = self.compute_path(viewpoints[a_idx].pose, viewpoints[b_idx].pose, path_planner, path_planner['path_planning_method'])
+                actual_path, _ = self.compute_path(tour_poses[a], tour_poses[b], path_planner, path_planner['path_planning_method'])
 
             # join paths
             path = path + actual_path[:-1]
 
             # force flight to end point
             if a == (n - 1):
-                path = path + [viewpoints[b_idx].pose]
+                path = path + [tour_poses[0]]
         return path
+
+    # #}
+
+    # #{ optimizeShellPoses()
+
+    def optimizeShellPoses(self, viewpoints, sequence, path_planner):
+        '''
+        For the fixed tour sequence, chooses for every inspection point the
+        time-optimal pose on its inspection-tolerance shell by dynamic programming.
+
+        The candidates lie EXACTLY on the nominal inspection sphere (full distance
+        tolerance is kept as margin) with the EXACT inspection heading (full heading
+        tolerance kept as margin) — only the position on the sphere within a cone
+        around the nominal viewpoint direction varies. The nominal viewpoint is
+        always among the candidates, hence the result can never be worse than the
+        nominal tour.
+
+        Parameters:
+            viewpoints (list[Viewpoint]): the viewpoints (index 0 = start pose)
+            sequence (list[int]): tour sequence over the viewpoints
+            path_planner (dict): dictionary of parameters
+
+        Returns:
+            tour_poses (list[Pose]): chosen pose for each tour position (start first)
+        '''
+
+        vp_dist    = path_planner.get('viewpoints_distance', 4.0)
+        cone_angle = path_planner.get('shell_dp/cone_angle', 0.55)
+
+        n = len(sequence)
+
+        # candidate poses per tour position (start pose is fixed)
+        layers = [[viewpoints[sequence[0]].pose]]
+        for k in range(1, n):
+            vp = viewpoints[sequence[k]]
+            ip = self._ip_by_idx.get(vp.idx)
+            layers.append(self.shellCandidates(vp, ip, vp_dist, cone_angle, path_planner))
+
+        # positions as arrays for the vectorized transition costs
+        arrays = [np.array([[p.point.x, p.point.y, p.point.z] for p in layer]) for layer in layers]
+
+        # heading of each layer (constant within a layer)
+        headings = [layer[0].heading for layer in layers]
+
+        (v_x, v_y, v_z), (a_x, a_y, a_z), hdg_rate = path_planner['dynamics']
+
+        # forward DP over the layers, closing the tour back at the start
+        costs   = [np.zeros(len(layers[0]))]
+        parents = [None]
+        for k in range(1, n + 1):
+            src = arrays[k - 1]
+            dst = arrays[k] if k < n else arrays[0]
+
+            T = self._pairTimeMatrix(src, dst, (v_x, v_y, v_z), (a_x, a_y, a_z))
+
+            # the heading-rotation time is a lower bound common to all candidate pairs
+            h_from = headings[k - 1]
+            h_to   = headings[k] if k < n else headings[0]
+            if h_from is not None and h_to is not None and hdg_rate > 1e-3:
+                T = np.maximum(T, abs(angleDiff(h_from, h_to)) / hdg_rate)
+
+            total     = costs[-1][:, None] + T
+            parent    = np.argmin(total, axis=0)
+            costs.append(np.min(total, axis=0))
+            parents.append(parent)
+
+        # reconstruct the chosen candidate indices (the tour ends at the single start pose)
+        chosen     = [0] * n
+        best_last  = int(parents[n][0])
+        chosen[n - 1] = best_last
+        for k in range(n - 1, 0, -1):
+            chosen[k - 1] = int(parents[k][chosen[k]])
+
+        tour_poses = [layers[k][chosen[k]] for k in range(n)]
+
+        return tour_poses
+
+    # #}
+
+    # #{ shellCandidates()
+
+    def shellCandidates(self, vp, ip, vp_dist, cone_angle, path_planner):
+        '''
+        Generates collision-free candidate poses on the inspection-tolerance shell
+        of the given viewpoint: points on the sphere of the exact nominal radius
+        around the inspection point, within a cone around the nominal viewpoint
+        direction, all with the exact inspection heading.
+        '''
+
+        nominal = Pose(vp.pose.point.x, vp.pose.point.y, vp.pose.point.z, vp.pose.heading)
+
+        if ip is None:
+            return [nominal]
+
+        ip_pos = np.array([ip.position.x, ip.position.y, ip.position.z])
+        vp_pos = np.array([vp.pose.point.x, vp.pose.point.y, vp.pose.point.z])
+
+        axis_len = np.linalg.norm(vp_pos - ip_pos)
+        if axis_len < 1e-6:
+            return [nominal]
+        axis = (vp_pos - ip_pos) / axis_len
+
+        # orthonormal basis perpendicular to the nominal direction
+        ref = np.array([0.0, 0.0, 1.0]) if abs(axis[2]) < 0.95 else np.array([1.0, 0.0, 0.0])
+        e1  = np.cross(axis, ref)
+        e1 /= np.linalg.norm(e1)
+        e2  = np.cross(axis, e1)
+
+        # rings of directions around the nominal axis
+        dirs = [axis]
+        for alpha in (0.5 * cone_angle, cone_angle):
+            for az in np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False):
+                d = np.cos(alpha) * axis + np.sin(alpha) * (np.cos(az) * e1 + np.sin(az) * e2)
+                dirs.append(d / np.linalg.norm(d))
+
+        positions = ip_pos + vp_dist * np.vstack(dirs)
+
+        # filter the candidates: obstacle clearance, bounds, keepout zones
+        candidates = [nominal]
+        safety     = path_planner['safety_distance']
+        bounds     = path_planner.get('bounds')
+        keepouts   = path_planner.get('extra_keepout', [])
+
+        clearances, _ = path_planner['obstacles_kdtree'].query(positions, k=1)
+
+        for i in range(1, len(positions)):
+            p = positions[i]
+            if clearances[i] <= safety:
+                continue
+            if bounds is not None and not bounds.valid(Point(p[0], p[1], p[2])):
+                continue
+            if any(np.linalg.norm(p - np.array(kp[0:3])) < kp[3] + 0.3 for kp in keepouts):
+                continue
+            candidates.append(Pose(float(p[0]), float(p[1]), float(p[2]), nominal.heading))
+
+        return candidates
+
+    # #}
+
+    # #{ _pairTimeMatrix()
+
+    def _pairTimeMatrix(self, src, dst, v_lims, a_lims):
+        '''
+        Vectorized straight-line flight-time estimates between all pairs of the
+        given position arrays (trapezoidal per-axis velocity profiles).
+
+        Parameters:
+            src (np.array [n, 3]), dst (np.array [m, 3])
+
+        Returns:
+            T (np.array [n, m]): time estimates in seconds
+        '''
+
+        def trapezoid(dist, v_max, a_max):
+            d_ramps = v_max * v_max / a_max
+            return np.where(dist >= d_ramps,
+                            dist / v_max + v_max / a_max,
+                            2.0 * np.sqrt(np.maximum(dist, 0.0) / a_max))
+
+        diff = dst[None, :, :] - src[:, None, :]
+        dxy  = np.sqrt(diff[:, :, 0]**2 + diff[:, :, 1]**2)
+        dz   = np.abs(diff[:, :, 2])
+
+        t_xy = trapezoid(dxy, min(v_lims[0], v_lims[1]), min(a_lims[0], a_lims[1]))
+        t_z  = trapezoid(dz, v_lims[2], a_lims[2])
+
+        return np.maximum(t_xy, t_z)
 
     # #}
 

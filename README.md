@@ -19,17 +19,21 @@ All changes live in [mrim_task/mrim_planner](mrim_task/mrim_planner) (the only f
 9. **Robustness fallbacks** — LKH failure → built-in 2-opt; TOPPRA failure → stop-at-waypoints sampling; A\* failure → RRT. No single failure can zero the score.
 10. **Unseen-world validation** — [local_eval/generate_problem.py](local_eval/generate_problem.py) generates worlds similar to (and harder than) `apocalypse_large`; the solution is validated on 6 such worlds besides the 3 official ones.
 
+11. **Shell-pose optimization (DP)** — for the fixed tour order, the actual inspection pose of every IP is chosen on its tolerance sphere (exact radius + exact heading kept as margin, position varies within a cone around the nominal viewpoint direction) by dynamic programming over flight-time estimates — each UAV approaches every IP from the direction it is already flying (`tsp/shell_dp`). Validated with an automatic safety net: if the planner's self-check finds any violation or a missed inspection, it replans once with the aggressive features disabled.
+
 ### Results (evaluation logic identical to mrim_manager, all checks green)
 
 | Problem | Score | Mission time | Planning time |
 |---|:---:|:---:|:---:|
-| apocalypse_small | 8/8 | 26.6 s | ~5 s |
-| apocalypse_moderate | 16/16 | 45.4 s | ~7 s |
-| apocalypse_large | 29/29 | 72.8 s | ~12 s |
-| unseen_comp_a/b/c | 34+33+35 (all) | 82.8–84.8 s | ~15 s |
-| unseen_dense | 34/34 | 91.2 s | ~16 s |
-| unseen_tight | 32/32 | 90.0 s | ~14 s |
-| unseen_wide40 | 40/40 | 99.0 s | ~17 s |
+| apocalypse_small | 8/8 | 25.4 s | ~6 s |
+| apocalypse_moderate | 16/16 | 44.8 s | ~8 s |
+| apocalypse_large | 29/29 | 67.4 s | ~13 s |
+| unseen_comp_a/b/c | 34+33+35 (all) | 75.4–79.6 s | ~15 s |
+| unseen_dense | 34/34 | 86.0 s | ~16 s |
+| unseen_tight | 32/32 | 84.0 s | ~15 s |
+| unseen_wide40 | 40/40 | 87.0 s | ~16 s |
+
+(Official `mrim_manager` in the Apptainer container reproduces these numbers exactly.)
 
 ## Setup
 

@@ -397,7 +397,8 @@ class TrajectoryUtils():
     # #}
 
     # #{ sampleTrajectoryThroughWaypoints()
-    def sampleTrajectoryThroughWaypoints(self, trajectory, with_stops, smooth_path, smoothing_la_dist, smoothing_sampling_step, velocity_limits, acceleration_limits):
+    def sampleTrajectoryThroughWaypoints(self, trajectory, with_stops, smooth_path, smoothing_la_dist, smoothing_sampling_step, velocity_limits, acceleration_limits,
+                                         corner_arcs=False, obstacles_kdtree=None, obstacle_safety=None, corner_arc_radius=4.0):
         '''
         Samples trajectory such that it respects dynamic constraints
 
@@ -438,7 +439,13 @@ class TrajectoryUtils():
             # If path smoothing is required, smooth the path
             if smooth_path:
                 print('[SMOOTHING PATH]')
-                waypoints = self.getSmoothPath(trajectory.waypoints, smoothing_la_dist, smoothing_sampling_step)
+
+                # clearance-aware corner rounding: replaces the corners of the straightened
+                # path by the largest circular arcs that keep the obstacle safety distance
+                if corner_arcs and obstacles_kdtree is not None and obstacle_safety is not None:
+                    waypoints = self.getSmoothPathArcs(trajectory.waypoints, smoothing_sampling_step, obstacles_kdtree, obstacle_safety, corner_arc_radius)
+                else:
+                    waypoints = self.getSmoothPath(trajectory.waypoints, smoothing_la_dist, smoothing_sampling_step)
 
                 # fall back to the raw waypoints if the smoothing failed
                 if not waypoints:
@@ -820,6 +827,171 @@ class TrajectoryUtils():
 
         return path
 
+    # #}
+
+    # #{ getSmoothPathArcs()
+    def getSmoothPathArcs(self, waypoints, sampling_step, obstacles_kdtree, obstacle_safety, arc_radius):
+        '''
+        Smooths a waypoint path by replacing the interior corners with circular arcs
+        whose radius is limited by the local obstacle clearance and segment lengths.
+        Poses with a defined heading (start pose and the viewpoints) are always
+        passed exactly.
+
+        Parameters:
+            waypoints (list[Pose]): the waypoints to be smoothed
+            sampling_step (float): sampling distance of the output path in meters
+            obstacles_kdtree: KD tree of the obstacle points for clearance queries
+            obstacle_safety (float): minimum allowed obstacle distance of the arcs
+            arc_radius (float): maximum (target) arc radius in meters
+
+        Returns:
+            path (list[Pose]): smoothed waypoint sequence
+        '''
+
+        path = [waypoints[0]]
+
+        leg_start = 0
+        for i in range(1, len(waypoints)):
+            if waypoints[i].heading is not None or i == len(waypoints) - 1:
+                leg_wps  = waypoints[leg_start:i + 1]
+                leg_path = self.roundLegCorners(leg_wps, sampling_step, obstacles_kdtree, obstacle_safety, arc_radius)
+                path.extend(leg_path)
+                leg_start = i
+
+        return path
+    # #}
+
+    # #{ roundLegCorners()
+    def roundLegCorners(self, waypoints, sampling_step, obstacles_kdtree, obstacle_safety, arc_radius):
+        '''
+        Rounds the interior corners of a single polyline leg with clearance-checked
+        circular arcs and resamples the result densely. Returns the samples following
+        the first pose, ending exactly at the last pose of the leg.
+        '''
+
+        pts = [np.array(w.point.asList()) for w in waypoints]
+
+        # build the geometric primitives: sequences of points (lines and arcs)
+        nodes = [pts[0]]
+
+        for i in range(1, len(pts) - 1):
+
+            p_prev, p_cur, p_next = nodes[-1], pts[i], pts[i + 1]
+
+            a = p_cur - p_prev
+            b = p_next - p_cur
+            len_a, len_b = np.linalg.norm(a), np.linalg.norm(b)
+
+            if len_a < 1e-6 or len_b < 1e-6:
+                continue
+
+            u, v = a / len_a, b / len_b
+            cos_phi = float(np.clip(np.dot(u, v), -1.0, 1.0))
+            phi     = np.arccos(cos_phi)
+
+            # (nearly) straight or (nearly) reversing corners are kept as-is
+            if phi < 0.05 or phi > np.pi - 0.15:
+                nodes.append(p_cur)
+                continue
+
+            # maximum tangent offset: at most 45 % of the adjacent segments
+            t_max = 0.45 * min(len_a, len_b)
+            r     = min(arc_radius, t_max / np.tan(phi / 2.0))
+
+            # large arcs must keep a slightly relaxed clearance (still well above the
+            # evaluation limit: planning distance includes a margin over the checks)
+            arc_clearance = obstacle_safety - 0.3
+
+            arc = None
+            while r > 0.9:
+                arc_pts = self._buildArc(p_cur, u, v, phi, r, sampling_step)
+                if arc_pts is None:
+                    break
+
+                clearances, _ = obstacles_kdtree.query(arc_pts, k=1)
+                if float(np.min(clearances)) > arc_clearance:
+                    arc = arc_pts
+                    break
+
+                r *= 0.5
+
+            # minimal rounding fallback: bound the corner CUT DEPTH r*(1/cos(phi/2)-1)
+            # (for sharp turns even small radii cut deeply into the corner!), and
+            # accept only if it clears the evaluation-level obstacle distance
+            if arc is None:
+                depth_factor = 1.0 / np.cos(phi / 2.0) - 1.0
+                if depth_factor > 1e-6:
+                    r_small = min(0.3 / depth_factor, t_max / np.tan(phi / 2.0))
+                    if r_small > 0.05:
+                        arc_pts = self._buildArc(p_cur, u, v, phi, r_small, sampling_step)
+                        if arc_pts is not None:
+                            clearances, _ = obstacles_kdtree.query(arc_pts, k=1)
+                            if float(np.min(clearances)) > obstacle_safety - 0.45:
+                                arc = arc_pts
+
+            if arc is not None:
+                for p in arc:
+                    nodes.append(p)
+            else:
+                # degenerate geometry: keep the sharp corner
+                nodes.append(p_cur)
+
+        nodes.append(pts[-1])
+
+        # resample the piecewise-linear result uniformly (the arc samples are already dense)
+        samples = []
+        for i in range(1, len(nodes)):
+            seg     = nodes[i] - nodes[i - 1]
+            seg_len = np.linalg.norm(seg)
+            if seg_len < 1e-9:
+                continue
+            n_s = max(1, int(np.ceil(seg_len / max(sampling_step, 1e-3))))
+            for j in range(1, n_s + 1):
+                p = nodes[i - 1] + seg * (float(j) / n_s)
+                samples.append(Pose(float(p[0]), float(p[1]), float(p[2]), None))
+
+        # end the leg exactly at its last pose (with its heading)
+        end_pose = waypoints[-1]
+        if samples and distEuclidean(samples[-1], end_pose) < 0.5 * sampling_step:
+            samples.pop()
+        samples.append(Pose(Point(end_pose.point.x, end_pose.point.y, end_pose.point.z), end_pose.heading))
+
+        return samples
+    # #}
+
+    # #{ _buildArc()
+    def _buildArc(self, p_cur, u, v, phi, r, sampling_step):
+        '''
+        Builds the sampled circular arc replacing the corner at p_cur between the unit
+        directions u (incoming) and v (outgoing) with radius r. Returns None for
+        degenerate geometry.
+        '''
+
+        t = r * np.tan(phi / 2.0)
+
+        arc_start = p_cur - u * t
+
+        bis  = v - u
+        bisn = np.linalg.norm(bis)
+        if bisn < 1e-9:
+            return None
+        center = p_cur + bis / bisn * (r / np.cos(phi / 2.0))
+
+        vec_s  = arc_start - center
+        vec_e  = (p_cur + v * t) - center
+        axis   = np.cross(vec_s, vec_e)
+        axis_n = np.linalg.norm(axis)
+        if axis_n < 1e-9:
+            return None
+        axis  = axis / axis_n
+        gamma = np.pi - phi  # central angle of the arc
+
+        n_s    = max(3, int(np.ceil((gamma * r) / max(sampling_step, 1e-3))))
+        angles = np.linspace(0.0, gamma, n_s + 1)
+
+        # Rodrigues rotation of vec_s around the axis
+        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        return np.array([center + vec_s + np.sin(t_a) * (K @ vec_s) + (1 - np.cos(t_a)) * (K @ (K @ vec_s)) for t_a in angles])
     # #}
 
     # #{ smoothLeg()

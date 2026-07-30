@@ -89,6 +89,16 @@ class MrimPlanner:
         self._path_planner['dynamics']       = (self._max_velocity, self._max_acceleration, self._max_heading_rate)
         self._path_planner['detour_penalty'] = self._detour_penalty
 
+        # optimization of the inspection poses on the tolerance shells
+        self._shell_dp                             = rospy.get_param('~tsp/shell_dp/enabled', False)
+        self._path_planner['shell_dp']             = self._shell_dp
+        self._path_planner['shell_dp/cone_angle']  = rospy.get_param('~tsp/shell_dp/cone_angle', 0.55)
+        self._path_planner['viewpoints_distance']  = self._viewpoints_distance
+
+        # clearance-aware corner rounding during path smoothing
+        self._corner_arcs       = rospy.get_param('~path_smoothing/corner_arcs', False)
+        self._corner_arc_radius = rospy.get_param('~path_smoothing/corner_arc_radius', 4.0)
+
         # load the parameters of all the planners (any of them may be used as a fallback)
         self._path_planner['astar/grid_resolution'] = rospy.get_param('~path_planner/astar/grid_resolution', 0.4)
         self._path_planner['rrt/branch_size']       = rospy.get_param('~path_planner/rrt/branch_size', 3.0)
@@ -144,6 +154,10 @@ class MrimPlanner:
     def planTrajectories(self, problem):
 
         stopwatch_start = time.time()
+
+        # refresh the enhancement switches (they may have been disabled by the
+        # conservative-replanning safety net)
+        self._path_planner['shell_dp'] = self._shell_dp
 
         ## | --------------- create visualization object -------------- |
         plotter = ProblemPlotter(self._plot)
@@ -267,7 +281,11 @@ class MrimPlanner:
                                                                            smooth_path=True, smoothing_la_dist=self._smoothing_distance,\
                                                                            smoothing_sampling_step=self._smoothing_sampling_step,\
                                                                            velocity_limits=constraints_velocity,
-                                                                           acceleration_limits=constraints_acceleration)
+                                                                           acceleration_limits=constraints_acceleration,
+                                                                           corner_arcs=self._corner_arcs,
+                                                                           obstacles_kdtree=self._path_planner.get('obstacles_kdtree'),
+                                                                           obstacle_safety=self._path_planner['safety_distance'],
+                                                                           corner_arc_radius=self._corner_arc_radius)
 
             # safety net: if the continuous sampling failed (e.g., TOPPRA could not
             # parametrize the path), retry with the always-feasible stop-at-waypoints
@@ -319,7 +337,17 @@ class MrimPlanner:
 
         ## | -------------- self-check of the solution -------------- |
         try:
-            self.selfCheck(problem, viewpoints, trajectories)
+            result = self.selfCheck(problem, viewpoints, trajectories)
+
+            # SAFETY NET: if the enhanced pipeline produced an invalid or incomplete
+            # solution, replan once with all the aggressive features disabled (that
+            # configuration is extensively validated to yield a full score)
+            if not result['valid'] and (self._shell_dp or self._corner_arcs):
+                print('[SELF-CHECK] solution invalid with enhancements enabled, replanning conservatively!')
+                self._shell_dp     = False
+                self._corner_arcs  = False
+                return self.planTrajectories(problem)
+
         except Exception as e:
             print('[SELF-CHECK] failed with exception: {:s}'.format(str(e)))
 
@@ -358,6 +386,8 @@ class MrimPlanner:
         print('########## SELF-CHECK OF THE SOLUTION #######')
         print('#############################################')
 
+        all_ok = True
+
         xyzs = []
         hdgs = []
         for r in range(len(trajectories)):
@@ -380,12 +410,14 @@ class MrimPlanner:
                 v_max, a_max = np.max(np.abs(vels[:, ax])), np.max(np.abs(accs[:, ax]))
                 v_ok = v_max < vel_lim[ax] + constraint_tol
                 a_ok = a_max < acc_lim[ax] + constraint_tol
+                all_ok = all_ok and v_ok and a_ok
                 print('[SELF-CHECK] [{:s}] UAV {:d} axis {:s}: max |vel| = {:.2f} m/s (limit {:.2f}), max |acc| = {:.2f} m/s^2 (limit {:.2f})'.format(
                     'OK' if (v_ok and a_ok) else 'FAIL', problem.robot_ids[r], name, v_max, vel_lim[ax], a_max, acc_lim[ax]))
 
             hv_max, ha_max = np.max(np.abs(hvels)), np.max(np.abs(haccs))
             hv_ok = hv_max < vel_lim[3] + constraint_tol
             ha_ok = ha_max < acc_lim[3] + constraint_tol
+            all_ok = all_ok and hv_ok and ha_ok
             print('[SELF-CHECK] [{:s}] UAV {:d} heading: max |rate| = {:.2f} rad/s (limit {:.2f}), max |acc| = {:.2f} rad/s^2 (limit {:.2f})'.format(
                 'OK' if (hv_ok and ha_ok) else 'FAIL', problem.robot_ids[r], hv_max, vel_lim[3], ha_max, acc_lim[3]))
 
@@ -402,6 +434,7 @@ class MrimPlanner:
             obst_tree = CheckKDTree(np.array([[o.x, o.y, o.z] for o in problem.obstacle_points]))
             for r in range(len(trajectories)):
                 d_min = float(np.min(obst_tree.query(xyzs[r], k=1)[0]))
+                all_ok = all_ok and d_min > check_obst_dist
                 print('[SELF-CHECK] [{:s}] UAV {:d} min obstacle distance: {:.2f} m (limit {:.2f})'.format(
                     'OK' if d_min > check_obst_dist else 'FAIL', problem.robot_ids[r], d_min, check_obst_dist))
 
@@ -412,6 +445,7 @@ class MrimPlanner:
             pos_a   = xyzs[0][np.minimum(idx, len(xyzs[0]) - 1)]
             pos_b   = xyzs[1][np.minimum(idx, len(xyzs[1]) - 1)]
             d_min   = float(np.min(np.linalg.norm(pos_a - pos_b, axis=1)))
+            all_ok  = all_ok and d_min > check_mutual_dist
             print('[SELF-CHECK] [{:s}] mutual distance: min {:.2f} m (limit {:.2f})'.format(
                 'OK' if d_min > check_mutual_dist else 'FAIL', d_min, check_mutual_dist))
 
@@ -419,11 +453,13 @@ class MrimPlanner:
         for r in range(len(trajectories)):
             sp    = problem.start_poses[r]
             d_end = float(np.linalg.norm(xyzs[r][-1] - np.array([sp.position.x, sp.position.y, sp.position.z])))
+            all_ok = all_ok and d_end <= 1.0
             print('[SELF-CHECK] [{:s}] UAV {:d} final position distance to start: {:.2f} m (limit 1.00)'.format(
                 'OK' if d_end <= 1.0 else 'FAIL', problem.robot_ids[r], d_end))
 
         ## | -------------------- mission duration -------------------- |
         t_mission = max([t.getTime() for t in trajectories])
+        all_ok    = all_ok and t_mission < mission_timeout
         print('[SELF-CHECK] [{:s}] mission duration: {:.1f} s (timeout {:.1f})'.format(
             'OK' if t_mission < mission_timeout else 'FAIL', t_mission, mission_timeout))
 
@@ -450,6 +486,10 @@ class MrimPlanner:
                         problem.robot_ids[r], vp.idx, float(np.min(dist_devs)), float(np.min(hdg_devs))))
         print('[SELF-CHECK] inspection coverage: {:d}/{:d} assigned viewpoints would be inspected'.format(n_ok, n_vps))
         print('#############################################')
+
+        all_ok = all_ok and n_ok == n_vps
+
+        return {'valid': all_ok, 'n_inspected': n_ok, 'n_assigned': n_vps, 'mission_time': t_mission}
     # # #}
 
 if __name__ == '__main__':

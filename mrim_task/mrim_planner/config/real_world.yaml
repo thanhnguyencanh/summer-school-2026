@@ -10,6 +10,13 @@ tsp:
   balance_time_budget: 12.0            # (s) maximum time spent by the balancing (lower soft solution-time limit in the real world)
   detour_penalty: 1.5                  # Cost multiplier of obstructed straight-line connections in the flight time estimates
 
+  # Optimization of the inspection poses on the tolerance shells (exact radius and
+  # heading kept; smaller cone than in the virtual challenge: real-world tracking
+  # errors eat into the tolerance margins)
+  shell_dp:
+    enabled: true
+    cone_angle: 0.45 # (rad) half-angle of the candidate cone around the nominal viewpoint direction
+
 # Parameters for path planning
 path_planner:
   timeout: 10.0              # (s) timeout for single start-to-goal planning
@@ -36,6 +43,8 @@ path_smoothing:
   sampling_step: 0.4      # (m)
   lookahead_dist: 0.8     # (m) Lookahead distance for path smoothing
   heading_hold_dist: 0.8  # (m) Distance along the path around the viewpoints in which the heading is held constant (larger in the real world: imperfect trajectory tracking)
+  corner_arcs: false      # EXPERIMENTAL, keep disabled (see virtual.yaml)
+  corner_arc_radius: 4.0  # (m) maximum corner arc radius
 
 # Parameters for sampling the UAVs' trajectories
 trajectory_sampling:
