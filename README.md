@@ -47,7 +47,7 @@ cd ${HOME}/git/summer-school-2026 && ./install.sh
 ## Task overview
 
 You are given two UAVs (Red 🟥 and Blue 🟦) required to inspect a set of **inspection points (IPs)** as fast as possible in a 3D environment with obstacles.
-The two UAVs are equipped with the [MRS control pipeline](https://github.com/ctu-mrs/uav_core) [1], allowing precise trajectory tracking.
+The two UAVs are equipped with the [MRS control pipeline](https://github.com/ctu-mrs/mrs_uav_core) [1], allowing precise trajectory tracking.
 Your task is to assign the IPs to the UAVs and to generate multi-goal paths visiting **viewpoints (VPs)** (poses in which the particular IPs are inspected with onboard cameras) of each IP while keeping a safe distance from the obstacles and between the two UAVs.
 Furthermore, you shall convert paths to collision-free time-parametrized trajectories that respect the UAVs' dynamic [constraints](#constraints).
 The IPs are defined by their position and inspection angle and are divided into three subsets:
