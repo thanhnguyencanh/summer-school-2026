@@ -89,18 +89,18 @@ Requirements:
 
 ### Installation procedure
 
-1. If you are a `git` veteran, you would think about `fork`-ing the repository, but because you are a veteran, you will know that a fork of a public repository cannot be made private, and you don't want your team's solutions to be public. So, we recommend to tap the plus sign in the top right corner, and then select the Import repository option. Add `https://github.com/ctu-mrs/summer-school-2026.git` as the link and while completing this form/page, you will find an option to make your new repository private.
-
-2. Clone your new repository to, e.g., `~/git`:
+1. Clone our team repository to, e.g., `~/git`:
 ```bash
 mkdir -p ${HOME}/git
-cd ${HOME}/git && git clone <your new repository's link>
+cd ${HOME}/git && git clone https://github.com/thanhnguyencanh/summer-school-2026.git
 ```
 
-3. Run the installation script that will install dependencies, download the MRS Apptainer image containing [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system), and compile the workspace:
+2. Run the installation script that will install dependencies, download the MRS Apptainer image containing [MRS UAV System](https://github.com/ctu-mrs/mrs_uav_system), and compile the workspace:
 ```bash
 cd ${HOME}/git/summer-school-2026 && ./install.sh
 ```
+
+(The upstream task repository is `https://github.com/ctu-mrs/summer-school-2026.git` — it is configured as the `upstream` remote, so organizer fixes can be pulled with `git pull upstream master`.)
 
 ## Task overview
 
