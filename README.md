@@ -85,6 +85,30 @@ The planner prints a `SELF-CHECK OF THE SOLUTION` block (every line must be `[OK
 
 Runs the real planner code with ROS stubbed out and evaluates it exactly like `mrim_manager` (score, dynamics, distances, final positions). The run must end with all `OK` and `INSPECTED` equal to the number of points. Generate more test worlds with `local_eval/generate_problem.py --name my_world --seed 7 --n-ips 34`.
 
+## Parameter tuning guide
+
+**Why this matters in the real world:** the virtual challenge evaluates the *reference* trajectory (our self-check reproduces it exactly, so nothing is left to chance), but the real-world challenge evaluates the **actual UAV pose**. Tracking error means the UAV can fly past a viewpoint outside the ±0.3 m / ±0.2 rad inspection window even though the reference is perfect — and the self-check cannot detect that. The knobs below (all in [config/virtual.yaml](mrim_task/mrim_planner/config/virtual.yaml) / [config/real_world.yaml](mrim_task/mrim_planner/config/real_world.yaml)) control the trade-off between speed and capture reliability.
+
+| Parameter | Virtual / Real | Role |
+|---|:---:|---|
+| `trajectories/dynamics_safety_factor` | 0.97 / 0.90 | Scales every velocity/acceleration/heading-rate limit used for planning. **The main real-world reliability knob**: lower = slower but gentler reference the UAV can track accurately (small position/heading error near viewpoints, obstacle margins preserved). |
+| `path_smoothing/heading_hold_dist` (m) | 0.6 / 0.8 | Distance along the path before/after every viewpoint in which the heading is frozen at the inspection heading. Increase if inspections are missed because the UAV is *already rotating* while passing the viewpoint. |
+| `tsp/shell_dp/radius_slack` / `heading_slack` | 0.2, 0.15 / **0.0, 0.0** | Part of the inspection tolerances (±0.3 m, ±0.2 rad) the planner *spends* to shorten the tour; everything not spent remains as margin for tracking error. Must stay 0 in the real world. In virtual, the safety net resets them automatically if the self-check ever fails. |
+| `path_smoothing/lookahead_dist` (m) | 0.8 / 0.8 | Pure-pursuit smoothing radius: larger = smoother and faster corners but larger deviation from the collision-free polyline; smaller = tighter and slower. Trajectories pass exactly through the viewpoints either way. |
+| `path_smoothing/sampling_step` (m) | 0.4 / 0.4 | Spacing of the waypoints handed to TOPPRA. Smaller = the final spline follows the smoothed path more faithfully and decelerates more honestly in curves (safer, slightly slower). |
+| `trajectory_sampling/with_stops` | false / false | **Guaranteed-capture fallback**: stop at every waypoint — a standstill sample with exact position and heading at each viewpoint. Costs a lot of mission time; the last resort if real UAVs keep missing inspections. |
+| `path_planner/obstacle_margin` (m) | 0.1 / 0.1 | Extra clearance added to the planning obstacle distance. Increase if the real UAV drifts closer to obstacles than planned (an obstacle violation zeroes the score). |
+| `collision_avoidance/mutual_margin` (m) | 0.3 / 0.5 | Extra margin on the minimum UAV–UAV distance used when computing deconfliction delays. |
+| `tsp/shell_dp/enabled`, `cone_angle` (rad) | true, 0.55 / true, 0.45 | Inspection-pose optimization on the tolerance spheres (incl. relocation of nominal viewpoints that violate the obstacle limit). `cone_angle` bounds how far poses may move from the nominal direction; smaller = more conservative. |
+
+**Symptom → what to change (real world):**
+
+- *Inspection missed, heading was off* → increase `heading_hold_dist` (0.8 → 1.2); verify `heading_slack: 0.0`.
+- *Inspection missed, UAV flew past too fast / off-radius* → lower `dynamics_safety_factor` (0.90 → 0.85), reduce `sampling_step` (0.4 → 0.3); verify `radius_slack: 0.0`.
+- *Still missing inspections* → `with_stops: true` — guaranteed capture at every viewpoint, accept the slower mission.
+- *Too close to obstacles / other UAV in real flight* → raise `obstacle_margin` / `mutual_margin`, lower `dynamics_safety_factor`.
+- *Mission too slow, everything captured reliably* → cautiously raise `dynamics_safety_factor` and/or `lookahead_dist`.
+
 ## Competition submission
 
 Deadline: **Monday, August 3, 11:59 p.m.** via the [Google form](https://docs.google.com/forms/d/1jcoQr2TPbzro8bFdiUZ3yzLbKQDW0foHmKn6kjHJXjQ) (team name, members, zip archive).
