@@ -53,5 +53,6 @@ INSPECTION_POINTS_END
 
 OBSTACLE_POINTS: unseen_wide40.asc
 WORLD: unseen_wide40.yaml
+MODEL: unseen_wide40.stl
 
 EOF

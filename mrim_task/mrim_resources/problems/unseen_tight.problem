@@ -45,5 +45,6 @@ INSPECTION_POINTS_END
 
 OBSTACLE_POINTS: unseen_tight.asc
 WORLD: unseen_tight.yaml
+MODEL: unseen_tight.stl
 
 EOF

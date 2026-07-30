@@ -101,20 +101,23 @@ def build_world(rng, half_x, half_y, n_structures, min_gap, starts):
             foot = r
 
         # keep flyable corridors between structures and clear zones at the starts
-        ok = all(np.hypot(cx - sx, cy - sy) > foot + sfoot + min_gap for sx, sy, sfoot, _, _ in structures)
+        ok = all(np.hypot(cx - s[0], cy - s[1]) > foot + s[2] + min_gap for s in structures)
         ok = ok and all(np.hypot(cx - s[0], cy - s[1]) > foot + 7.0 for s in starts)
         if not ok:
             continue
 
         if kind == 'box':
-            pts = sample_box(rng, cx, cy, w, d, h)
+            pts    = sample_box(rng, cx, cy, w, d, h)
+            params = (w, d)
         elif kind == 'cyl':
-            pts = sample_cylinder(rng, cx, cy, foot, h)
+            pts    = sample_cylinder(rng, cx, cy, foot, h)
+            params = (foot,)
         else:
-            pts = sample_mound(rng, cx, cy, foot)
+            pts    = sample_mound(rng, cx, cy, foot)
+            params = (foot,)
 
         obstacles.extend(pts)
-        structures.append((cx, cy, foot, h, kind))
+        structures.append((cx, cy, foot, h, kind, params))
 
     return obstacles, structures
 
@@ -137,7 +140,7 @@ def gen_ips(rng, tree, structures, starts, n_ips, half_x, half_y, max_z,
     while len(ips) < n_ips and attempts < 20000:
         attempts += 1
 
-        cx, cy, foot, h, kind = structures[rng.integers(0, len(structures))]
+        cx, cy, foot, h, kind = structures[rng.integers(0, len(structures))][:5]
 
         tilt_choice = rng.random()
         if tilt_choice < 0.6:
@@ -191,6 +194,90 @@ def gen_ips(rng, tree, structures, starts, n_ips, half_x, half_y, max_z,
         vps.append(vp)
 
     return ips
+
+
+# | ---------------------- mesh (STL) export ------------------ |
+
+def box_tris(cx, cy, w, d, h):
+    x0, x1 = cx - w / 2, cx + w / 2
+    y0, y1 = cy - d / 2, cy + d / 2
+    v = [(x0, y0, 0), (x1, y0, 0), (x1, y1, 0), (x0, y1, 0),
+         (x0, y0, h), (x1, y0, h), (x1, y1, h), (x0, y1, h)]
+    quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+    tris  = []
+    for a, b, c, dd in quads:
+        tris.append((v[a], v[b], v[c]))
+        tris.append((v[a], v[c], v[dd]))
+    return tris
+
+
+def cyl_tris(cx, cy, r, h, n=24):
+    tris = []
+    for i in range(n):
+        a0 = 2 * np.pi * i / n
+        a1 = 2 * np.pi * (i + 1) / n
+        p0 = (cx + r * np.cos(a0), cy + r * np.sin(a0))
+        p1 = (cx + r * np.cos(a1), cy + r * np.sin(a1))
+        # side
+        tris.append(((p0[0], p0[1], 0), (p1[0], p1[1], 0), (p1[0], p1[1], h)))
+        tris.append(((p0[0], p0[1], 0), (p1[0], p1[1], h), (p0[0], p0[1], h)))
+        # top and bottom discs
+        tris.append(((cx, cy, h), (p0[0], p0[1], h), (p1[0], p1[1], h)))
+        tris.append(((cx, cy, 0), (p1[0], p1[1], 0), (p0[0], p0[1], 0)))
+    return tris
+
+
+def mound_tris(cx, cy, r, stacks=8, slices=24):
+    tris = []
+
+    def pt(i, j):
+        th = (np.pi / 2) * i / stacks   # elevation
+        az = 2 * np.pi * j / slices
+        rr = r * np.cos(th)
+        return (cx + rr * np.cos(az), cy + rr * np.sin(az), r * np.sin(th))
+
+    for i in range(stacks):
+        for j in range(slices):
+            p00, p01 = pt(i, j), pt(i, j + 1)
+            p10, p11 = pt(i + 1, j), pt(i + 1, j + 1)
+            tris.append((p00, p01, p11))
+            if i + 1 < stacks:
+                tris.append((p00, p11, p10))
+    return tris
+
+
+def write_stl(path, tris, name='terrain'):
+    def normal(t):
+        u = np.subtract(t[1], t[0])
+        v = np.subtract(t[2], t[0])
+        n = np.cross(u, v)
+        ln = np.linalg.norm(n)
+        return n / ln if ln > 1e-12 else (0.0, 0.0, 1.0)
+
+    with open(path, 'w') as f:
+        f.write('solid {}\n'.format(name))
+        for t in tris:
+            n = normal(t)
+            f.write('facet normal {:.6f} {:.6f} {:.6f}\n'.format(n[0], n[1], n[2]))
+            f.write('outer loop\n')
+            for v in t:
+                f.write('vertex {:.4f} {:.4f} {:.4f}\n'.format(v[0], v[1], v[2]))
+            f.write('endloop\nendfacet\n')
+        f.write('endsolid {}\n'.format(name))
+
+
+def structures_to_stl(path, structures, half_x, half_y):
+    tris = []
+    # thin ground slab
+    tris.extend(box_tris(0.0, 0.0, 2 * half_x, 2 * half_y, 0.05))
+    for cx, cy, foot, h, kind, params in structures:
+        if kind == 'box':
+            tris.extend(box_tris(cx, cy, params[0], params[1], h))
+        elif kind == 'cyl':
+            tris.extend(cyl_tris(cx, cy, params[0], h))
+        else:
+            tris.extend(mound_tris(cx, cy, params[0]))
+    write_stl(path, tris)
 
 
 # | --------------------------- main ------------------------- |
@@ -272,8 +359,13 @@ def main():
                 k + 1, ip[0], ip[1], ip[2], heading, tilt, ' '.join(str(i) for i in insp)))
         f.write('INSPECTION_POINTS_END\n\n')
         f.write('OBSTACLE_POINTS: {}.asc\n'.format(args.name))
-        f.write('WORLD: {}.yaml\n\n'.format(args.name))
+        f.write('WORLD: {}.yaml\n'.format(args.name))
+        f.write('MODEL: {}.stl\n\n'.format(args.name))
         f.write('EOF\n')
+
+    # write the visualization mesh (RViz Mesh display; cosmetic only, the
+    # planner and the evaluator use the obstacle point cloud)
+    structures_to_stl(os.path.join(RES_DIR, 'blender_files', args.name + '.stl'), structures, args.half_x, args.half_y)
 
     n_purple = sum(1 for i in ips if len(i[3]) == 2)
     print('generated {}: {} obstacle points, {} structures, {} IPs ({} shared, {} exclusive)'.format(

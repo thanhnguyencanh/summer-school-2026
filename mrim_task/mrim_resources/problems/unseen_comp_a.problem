@@ -47,5 +47,6 @@ INSPECTION_POINTS_END
 
 OBSTACLE_POINTS: unseen_comp_a.asc
 WORLD: unseen_comp_a.yaml
+MODEL: unseen_comp_a.stl
 
 EOF

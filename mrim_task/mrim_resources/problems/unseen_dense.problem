@@ -47,5 +47,6 @@ INSPECTION_POINTS_END
 
 OBSTACLE_POINTS: unseen_dense.asc
 WORLD: unseen_dense.yaml
+MODEL: unseen_dense.stl
 
 EOF
