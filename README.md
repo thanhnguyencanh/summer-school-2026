@@ -41,6 +41,14 @@ cd ${HOME}/git && git clone https://github.com/thanhnguyencanh/summer-school-202
 cd summer-school-2026 && ./install.sh   # installs Apptainer, downloads MRS image, compiles the workspace
 ```
 
+`install.sh` runs the three steps below — they can also be run individually from `simulation/` (useful for partial re-runs):
+
+| Script | What it does | When to re-run |
+|---|---|---|
+| `simulation/01_install.sh` | installs Apptainer via apt (**needs sudo**, Ubuntu only) | once per machine |
+| `simulation/02_download.sh` | downloads the ~3.5 GB MRS image to `simulation/images/` (resumable; **deletes the old image first**) | on image updates |
+| `simulation/03_compile.sh` | `catkin build` of the workspace inside the container | after changing C++ code (`mrim_state_machine`); Python/config changes need no rebuild |
+
 ## Testing & evaluation
 
 ### 1. Official offline evaluation (recommended before any submission)
