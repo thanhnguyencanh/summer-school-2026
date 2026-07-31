@@ -22,20 +22,21 @@ All changes live in [mrim_task/mrim_planner](mrim_task/mrim_planner) (the only f
 11. **Shell-pose optimization (DP)** — for the fixed tour order, the actual inspection pose of every IP is chosen on its tolerance sphere by dynamic programming over flight-time estimates, so each UAV approaches every IP from the direction it is already flying (`tsp/shell_dp`). In the virtual challenge a controlled part of the inspection tolerances is spent as well (`radius_slack` 0.2 of the 0.3 m distance tolerance, `heading_slack` 0.15 of the 0.2 rad heading tolerance) — the reference is tracked exactly there; in the real-world config both slacks are 0 (tracking errors need the full tolerances).
 12. **Unsafe-viewpoint relocation** — if a *nominal* viewpoint is closer to an obstacle than the evaluation limit (possible when an IP faces another structure — flying there would zero the whole score), the whole tolerance sphere is searched and the inspection is performed from a safe pose instead.
 13. **Escalating safety net** — the planner self-checks every zero-score condition; on any failure it replans with zero slacks first (keeping the DP + relocation), then with all aggressive features disabled, and as a last resort sacrifices the viewpoint nearest to an obstacle violation (max 3) — one lost point always beats a zeroed mission.
+14. **Portfolio planning** (virtual) — the otherwise-idle planning budget (soft limit 120 s) is spent planning the mission under several parameter variants (aggressive base, zero-slack, proven-safe conservative smoothing); each is self-checked and the best valid one by (inspections, mission time) is kept. Aggressive settings can therefore never lose points on an unseen world — if they fail there, the validated conservative variant wins automatically (`portfolio` in the config).
 
 ### Results (evaluation logic identical to mrim_manager, all checks green)
 
 | Problem | Score | Mission time | Planning time |
 |---|:---:|:---:|:---:|
-| apocalypse_small | 8/8 | 22.6 s | ~6 s |
-| apocalypse_moderate | 16/16 | 40.0 s | ~9 s |
-| apocalypse_large | 29/29 | 63.6 s | ~13 s |
-| unseen_comp_a/b/c | 34+33+35 (all) | 68.8–73.2 s | ~16–33 s |
-| unseen_dense | 34/34 | 79.0 s | ~17 s |
-| unseen_tight | 32/32 | 79.8 s | ~33 s |
-| unseen_wide40 | 40/40 | 83.2 s | ~18 s |
+| apocalypse_small | 8/8 | 22.6 s | ~17 s |
+| apocalypse_moderate | 16/16 | 40.0 s | ~25 s |
+| apocalypse_large | 29/29 | 63.6 s | ~37 s |
+| unseen_comp_a/b/c | 34+33+35 (all) | 68.4–73.2 s | ~48–62 s |
+| unseen_dense | 34/34 | 79.0 s | ~50 s |
+| unseen_tight | 32/32 | 79.8 s | ~64 s |
+| unseen_wide40 | 40/40 | 82.2 s | ~51 s |
 
-(The aggressive smoothing — `lookahead_dist` 1.5 m, `sampling_step` 0.8 m — lets TOPPRA fly the path considerably faster. On two of the nine worlds it makes the tolerance slacks overshoot; the self-check net detects that and automatically replans those with zero slacks, which is where the ~33 s planning times come from.)
+(The aggressive smoothing — `lookahead_dist` 1.5 m, `sampling_step` 0.8 m — lets TOPPRA fly the path considerably faster. The planning time covers the whole portfolio of variants and stays under the 120 s soft limit; the mission time is always the best valid variant's.)
 
 With the `real_world` config (3/3/1 m/s dynamics, 2.0/4.0 m distances, VP distance 5.0 m): apocalypse_large 29/29 @ 115.0 s, unseen_dense 34/34 @ 137.4 s (2 unsafe viewpoints auto-relocated — without relocation this world zero-scores), unseen_tight 32/32 @ 124.2 s, unseen_wide40 40/40 @ 142.4 s (min obstacle distances 2.27–2.68 m vs the 2.0 m limit).
 
