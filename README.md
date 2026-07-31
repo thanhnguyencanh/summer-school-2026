@@ -27,15 +27,17 @@ All changes live in [mrim_task/mrim_planner](mrim_task/mrim_planner) (the only f
 
 | Problem | Score | Mission time | Planning time |
 |---|:---:|:---:|:---:|
-| apocalypse_small | 8/8 | 25.0 s | ~6 s |
-| apocalypse_moderate | 16/16 | 44.4 s | ~8 s |
-| apocalypse_large | 29/29 | 66.6 s | ~13 s |
-| unseen_comp_a/b/c | 34+33+35 (all) | 75.8–78.8 s | ~15 s |
-| unseen_dense | 34/34 | 85.6 s | ~16 s |
-| unseen_tight | 32/32 | 85.0 s | ~15 s |
-| unseen_wide40 | 40/40 | 86.4 s | ~16 s |
+| apocalypse_small | 8/8 | 22.6 s | ~6 s |
+| apocalypse_moderate | 16/16 | 40.0 s | ~9 s |
+| apocalypse_large | 29/29 | 63.6 s | ~13 s |
+| unseen_comp_a/b/c | 34+33+35 (all) | 68.8–73.2 s | ~16–33 s |
+| unseen_dense | 34/34 | 79.0 s | ~17 s |
+| unseen_tight | 32/32 | 79.8 s | ~33 s |
+| unseen_wide40 | 40/40 | 83.2 s | ~18 s |
 
-With the `real_world` config (3/3/1 m/s dynamics, 2.0/4.0 m distances, VP distance 5.0 m): apocalypse_large 29/29 @ 119.6 s, unseen_dense 34/34 @ 141.0 s (2 unsafe viewpoints auto-relocated — without relocation this world zero-scores), unseen_tight 32/32 @ 131.0 s, unseen_wide40 40/40 @ 148.2 s (1 viewpoint relocated).
+(The aggressive smoothing — `lookahead_dist` 1.5 m, `sampling_step` 0.8 m — lets TOPPRA fly the path considerably faster. On two of the nine worlds it makes the tolerance slacks overshoot; the self-check net detects that and automatically replans those with zero slacks, which is where the ~33 s planning times come from.)
+
+With the `real_world` config (3/3/1 m/s dynamics, 2.0/4.0 m distances, VP distance 5.0 m): apocalypse_large 29/29 @ 115.0 s, unseen_dense 34/34 @ 137.4 s (2 unsafe viewpoints auto-relocated — without relocation this world zero-scores), unseen_tight 32/32 @ 124.2 s, unseen_wide40 40/40 @ 142.4 s (min obstacle distances 2.27–2.68 m vs the 2.0 m limit).
 
 (Official `mrim_manager` in the Apptainer container reproduces these numbers exactly.)
 
@@ -94,8 +96,8 @@ Runs the real planner code with ROS stubbed out and evaluates it exactly like `m
 | `trajectories/dynamics_safety_factor` | 0.97 / 0.90 | Scales every velocity/acceleration/heading-rate limit used for planning. **The main real-world reliability knob**: lower = slower but gentler reference the UAV can track accurately (small position/heading error near viewpoints, obstacle margins preserved). |
 | `path_smoothing/heading_hold_dist` (m) | 0.6 / 0.8 | Distance along the path before/after every viewpoint in which the heading is frozen at the inspection heading. Increase if inspections are missed because the UAV is *already rotating* while passing the viewpoint. |
 | `tsp/shell_dp/radius_slack` / `heading_slack` | 0.2, 0.15 / **0.0, 0.0** | Part of the inspection tolerances (±0.3 m, ±0.2 rad) the planner *spends* to shorten the tour; everything not spent remains as margin for tracking error. Must stay 0 in the real world. In virtual, the safety net resets them automatically if the self-check ever fails. |
-| `path_smoothing/lookahead_dist` (m) | 0.8 / 0.8 | Pure-pursuit smoothing radius: larger = smoother and faster corners but larger deviation from the collision-free polyline; smaller = tighter and slower. Trajectories pass exactly through the viewpoints either way. |
-| `path_smoothing/sampling_step` (m) | 0.4 / 0.4 | Spacing of the waypoints handed to TOPPRA. Smaller = the final spline follows the smoothed path more faithfully and decelerates more honestly in curves (safer, slightly slower). |
+| `path_smoothing/lookahead_dist` (m) | 1.5 / 1.5 | Pure-pursuit smoothing radius: larger = smoother and faster corners but larger deviation from the collision-free polyline; smaller = tighter and slower. Trajectories pass exactly through the viewpoints either way. Reduce towards 0.8 if obstacle margins get tight. |
+| `path_smoothing/sampling_step` (m) | 0.8 / 0.8 | Spacing of the waypoints handed to TOPPRA. Smaller = the final spline follows the smoothed path more faithfully and decelerates more honestly in curves (safer, slower). Reduce towards 0.4 if constraints are violated or inspections are missed. |
 | `trajectory_sampling/with_stops` | false / false | **Guaranteed-capture fallback**: stop at every waypoint — a standstill sample with exact position and heading at each viewpoint. Costs a lot of mission time; the last resort if real UAVs keep missing inspections. |
 | `path_planner/obstacle_margin` (m) | 0.1 / 0.1 | Extra clearance added to the planning obstacle distance. Increase if the real UAV drifts closer to obstacles than planned (an obstacle violation zeroes the score). |
 | `collision_avoidance/mutual_margin` (m) | 0.3 / 0.5 | Extra margin on the minimum UAV–UAV distance used when computing deconfliction delays. |
@@ -104,7 +106,7 @@ Runs the real planner code with ROS stubbed out and evaluates it exactly like `m
 **Symptom → what to change (real world):**
 
 - *Inspection missed, heading was off* → increase `heading_hold_dist` (0.8 → 1.2); verify `heading_slack: 0.0`.
-- *Inspection missed, UAV flew past too fast / off-radius* → lower `dynamics_safety_factor` (0.90 → 0.85), reduce `sampling_step` (0.4 → 0.3); verify `radius_slack: 0.0`.
+- *Inspection missed, UAV flew past too fast / off-radius* → lower `dynamics_safety_factor` (0.90 → 0.85), reduce `sampling_step` (0.8 → 0.4) and `lookahead_dist` (1.5 → 0.8); verify `radius_slack: 0.0`.
 - *Still missing inspections* → `with_stops: true` — guaranteed capture at every viewpoint, accept the slower mission.
 - *Too close to obstacles / other UAV in real flight* → raise `obstacle_margin` / `mutual_margin`, lower `dynamics_safety_factor`.
 - *Mission too slow, everything captured reliably* → cautiously raise `dynamics_safety_factor` and/or `lookahead_dist`.
