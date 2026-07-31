@@ -54,15 +54,6 @@ path_smoothing:
 trajectory_sampling:
   with_stops: false # If true, UAVs will stop at each waypoint
 
-# Portfolio planning: plan the mission under several parameter variants (base,
-# no-slack, larger smoothing lookahead) and keep the fastest self-check-valid
-# solution. Uses the otherwise-idle planning budget (soft limit 120 s, one variant
-# takes ~6-16 s); variants that fail the self-check on a world are discarded, so
-# the result is never worse than the single base plan.
-portfolio:
-  enabled: true
-  time_budget: 90.0 # (s) do not launch further variants beyond this planning time
-
 # Additional safety margin on the dynamic constraints used for planning
 # (0.97 validated on 9 problems: constraint checks pass with reserve, ~3% faster missions)
 trajectories:

@@ -52,13 +52,6 @@ path_smoothing:
 trajectory_sampling:
   with_stops: false # If true, UAVs will stop at each waypoint
 
-# Portfolio planning is disabled in the real world: the variant selection
-# optimizes the reference trajectory, but the real-world evaluation tracks the
-# actual UAV pose -- more aggressive references would erode the tracking margins
-portfolio:
-  enabled: false
-  time_budget: 40.0
-
 # Additional safety margin on the dynamic constraints used for planning
 # (more conservative in the real world: the reference is tracked imperfectly)
 trajectories:

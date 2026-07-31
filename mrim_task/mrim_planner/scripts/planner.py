@@ -109,19 +109,6 @@ class MrimPlanner:
         self._corner_arcs       = rospy.get_param('~path_smoothing/corner_arcs', False)
         self._corner_arc_radius = rospy.get_param('~path_smoothing/corner_arc_radius', 4.0)
 
-        # portfolio planning: plan the mission under several parameter variants
-        # within the time budget and keep the fastest self-check-valid solution
-        self._portfolio_enabled = rospy.get_param('~portfolio/enabled', False)
-        self._portfolio_budget  = rospy.get_param('~portfolio/time_budget', 60.0)
-        self._base_variant = {
-            'shell_dp':      self._shell_dp,
-            'corner_arcs':   self._corner_arcs,
-            'radius_slack':  self._path_planner['shell_dp/radius_slack'],
-            'heading_slack': self._path_planner['shell_dp/heading_slack'],
-            'lookahead':     self._smoothing_distance,
-            'sampling':      self._smoothing_sampling_step,
-        }
-
         # load the parameters of all the planners (any of them may be used as a fallback)
         self._path_planner['astar/grid_resolution'] = rospy.get_param('~path_planner/astar/grid_resolution', 0.4)
         self._path_planner['rrt/branch_size']       = rospy.get_param('~path_planner/rrt/branch_size', 3.0)
@@ -175,94 +162,6 @@ class MrimPlanner:
 
     # # #{ planTrajectories()
     def planTrajectories(self, problem):
-        '''
-        Entry point: with portfolio planning enabled, the mission is planned under
-        several parameter variants (the planning-time budget is otherwise mostly
-        unused) and the fastest self-check-valid solution is kept. Aggressive
-        variants that fail the self-check on a particular world are simply
-        discarded, hence the result is never worse than the single base plan.
-        '''
-
-        if not self._portfolio_enabled:
-            return self._planOnce(problem)
-
-        t_start  = time.time()
-        variants = self._portfolioVariants()
-
-        best   = None
-        t_last = 0.0
-        trajectories, plotter = None, None
-
-        for name, overrides in variants:
-
-            # launch another variant only if it is likely to fit in the budget
-            if best is not None and (time.time() - t_start) + 1.3 * t_last > self._portfolio_budget:
-                print('[PORTFOLIO] time budget {:.0f} s would be exceeded, skipping the remaining variants.'.format(self._portfolio_budget))
-                break
-
-            print("[PORTFOLIO] planning variant '{:s}'".format(name))
-            t_v = time.time()
-            self._applyVariant(overrides)
-            trajectories, plotter = self._planOnce(problem)
-            t_last = time.time() - t_v
-
-            t_mission = self._last_check_mission if self._last_check_mission is not None else max([t.getTime() for t in trajectories])
-            print("[PORTFOLIO] variant '{:s}': mission time {:.1f} s, valid: {:s} (planned in {:.1f} s)".format(name, t_mission, str(self._last_check_valid), t_last))
-
-            # rank by the number of inspected points first (a variant may have
-            # sacrificed a viewpoint via the last-resort net), then by mission time
-            key = (-self._last_check_inspected, t_mission)
-            if self._last_check_valid and (best is None or key < best[0]):
-                best = (key, trajectories, plotter, name)
-
-        if best is None:
-            print('[PORTFOLIO] no variant passed the self-check, returning the last one.')
-            return trajectories, plotter
-
-        print("[PORTFOLIO] selected variant '{:s}' with mission time {:.1f} s".format(best[3], best[0][1]))
-        return best[1], best[2]
-
-    def _portfolioVariants(self):
-        '''
-        The parameter variants tried by the portfolio (base configuration first —
-        it is always planned). The variants toggle the inspection-tolerance slacks
-        (each helps on some worlds and hurts on others) and a larger smoothing
-        lookahead (faster corners, but erodes the obstacle margins on some worlds
-        — usable only because invalid variants are discarded by the self-check).
-        '''
-
-        slacks_on = self._base_variant['radius_slack'] > 0.0 or self._base_variant['heading_slack'] > 0.0
-
-        variants = [('base', {})]
-        if slacks_on:
-            variants.append(('no-slack', {'radius_slack': 0.0, 'heading_slack': 0.0}))
-
-        # proven-safe fallback: conservative smoothing with zero slacks -- ranked by
-        # inspections first, it wins automatically iff an aggressive base loses points
-        if self._base_variant['lookahead'] > 0.8 or self._base_variant['sampling'] > 0.4:
-            variants.append(('safe-smoothing', {'radius_slack': 0.0, 'heading_slack': 0.0,
-                                                'lookahead': 0.8, 'sampling': 0.4}))
-
-        return variants
-
-    def _applyVariant(self, overrides):
-        '''Resets the planner to the base configuration and applies the variant overrides.'''
-
-        variant = dict(self._base_variant)
-        variant.update(overrides)
-
-        self._shell_dp                               = variant['shell_dp']
-        self._corner_arcs                            = variant['corner_arcs']
-        self._path_planner['shell_dp/radius_slack']  = variant['radius_slack']
-        self._path_planner['shell_dp/heading_slack'] = variant['heading_slack']
-        self._smoothing_distance                     = variant['lookahead']
-        self._smoothing_sampling_step                = variant['sampling']
-
-        # reset the safety-net state
-        self._exclude_vp_idxs  = set()
-        self._dropped_vp_count = 0
-
-    def _planOnce(self, problem):
 
         stopwatch_start = time.time()
 
@@ -451,14 +350,8 @@ class MrimPlanner:
         # # #}
 
         ## | -------------- self-check of the solution -------------- |
-        self._last_check_valid     = True
-        self._last_check_mission   = None
-        self._last_check_inspected = 0
         try:
             result = self.selfCheck(problem, viewpoints, trajectories)
-            self._last_check_valid     = result['valid']
-            self._last_check_mission   = result['mission_time']
-            self._last_check_inspected = result['n_inspected']
 
             # SAFETY NET (stage 1): the inspection-tolerance slacks are the most
             # aggressive feature -- retry with zero slacks first, keeping the
@@ -468,7 +361,7 @@ class MrimPlanner:
                 print('[SELF-CHECK] solution invalid, replanning with zero inspection-tolerance slacks!')
                 self._path_planner['shell_dp/radius_slack']  = 0.0
                 self._path_planner['shell_dp/heading_slack'] = 0.0
-                return self._planOnce(problem)
+                return self.planTrajectories(problem)
 
             # SAFETY NET (stage 2): still invalid -- replan with all the aggressive
             # features disabled (that configuration is extensively validated to
@@ -477,7 +370,7 @@ class MrimPlanner:
                 print('[SELF-CHECK] solution invalid with enhancements enabled, replanning conservatively!')
                 self._shell_dp     = False
                 self._corner_arcs  = False
-                return self._planOnce(problem)
+                return self.planTrajectories(problem)
 
             # LAST-RESORT NET: still invalid due to a too-small obstacle distance
             # (e.g., an inspection point whose whole tolerance sphere is unsafe).
@@ -497,7 +390,7 @@ class MrimPlanner:
                     print('[SELF-CHECK] dropping viewpoint of IP {:d} (nearest to the obstacle violation) and replanning!'.format(nearest[1]))
                     self._exclude_vp_idxs.add(nearest[1])
                     self._dropped_vp_count += 1
-                    return self._planOnce(problem)
+                    return self.planTrajectories(problem)
 
         except Exception as e:
             print('[SELF-CHECK] failed with exception: {:s}'.format(str(e)))
