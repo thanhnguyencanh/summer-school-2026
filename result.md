@@ -200,23 +200,3 @@ Diagonal is each world's optimum: **21.4 / 36.8 / 58.4** vs baseline 22.6 / 40.0
 | large | − heading_hold | 58.4 → 58.4 (contributes nothing) |
 | large | − cone / − sampling_step / − radius_slack / − lookahead | 62.2 / 59.4`F2` / 59.0`F1` / 59.4 (all essential) |
 
-## Cross-world — no combination generalises
-
-Cross-world numbers are in the *Best per world* table above. No combination wins on more
-than its own world; each is worse than baseline on at least one other. The "unified"
-candidate `cone=1.10 + ss=1.2 + dyn=0.99` is the same as moderate-best — it only matches
-baseline on small (22.6) and loses 2.0 s on large (65.6).
-
-The *pre-ablation* combos measured worse off-diagonal (small-best 42.0 / 64.6 `F1`,
-large-best with `heading_hold=0.3`), so the ablations improved generalisation as well as
-the on-target result.
-
-## Rejected
-
-- **`clustering=random`** — best single knob on moderate (36.8) but stochastic:
-  repeats gave **40.2 / 35.0 / 38.8**, and it costs +15.0 s on large. `kmeans` reaches the
-  same 36.8 deterministically.
-- **`cone_angle=1.30` as a global setting** — best on large, worst overall across 9 worlds.
-- **`heading_slack`, `obstacle_margin`, `grid_resolution`** — base value is best everywhere.
-
----
