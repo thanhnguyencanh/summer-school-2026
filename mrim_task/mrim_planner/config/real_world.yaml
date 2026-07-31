@@ -42,11 +42,11 @@ path_planner:
 
 # Parameters for path smoothing
 path_smoothing:
-  sampling_step: 0.4      # (m)
-  lookahead_dist: 0.8     # (m) Lookahead distance for path smoothing
+  sampling_step: 0.8      # (m)
+  lookahead_dist: 1.5     # (m) Lookahead distance for path smoothing
   heading_hold_dist: 0.8  # (m) Distance along the path around the viewpoints in which the heading is held constant (larger in the real world: imperfect trajectory tracking)
   corner_arcs: false      # EXPERIMENTAL, keep disabled (see virtual.yaml)
-  corner_arc_radius: 4.0  # (m) maximum corner arc radius
+  corner_arc_radius: 6.0  # (m) maximum corner arc radius
 
 # Parameters for sampling the UAVs' trajectories
 trajectory_sampling:
