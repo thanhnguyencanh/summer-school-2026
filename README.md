@@ -113,7 +113,7 @@ Runs the real planner code with ROS stubbed out and evaluates it exactly like `m
 
 ## Competition submission
 
-Deadline: **Monday, August 3, 11:59 p.m.** via the [Google form](https://docs.google.com/forms/d/1jcoQr2TPbzro8bFdiUZ3yzLbKQDW0foHmKn6kjHJXjQ) (team name, members, zip archive).
+Deadline: **Monday, August 3, 11:59 p.m.** via the [Google form](https://forms.gle/RXf8DQzCJn8txecB8) (team name, members, zip archive — link updated by the organizers on Aug 1, the old `docs.google.com/...1jcoQr...` link is dead).
 
 ```bash
 cd mrim_task && zip -r team_name.zip mrim_planner
