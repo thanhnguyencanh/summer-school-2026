@@ -200,3 +200,54 @@ Diagonal is each world's optimum: **21.4 / 36.8 / 58.4** vs baseline 22.6 / 40.0
 | large | − heading_hold | 58.4 → 58.4 (contributes nothing) |
 | large | − cone / − sampling_step / − radius_slack / − lookahead | 62.2 / 59.4`F2` / 59.0`F1` / 59.4 (all essential) |
 
+
+---
+
+# Unseen-world validation & real-world tuning (Aug 3)
+
+## Virtual: large-best on the 6 unseen worlds (final time = mission + compute penalty)
+
+| Config | comp_a | comp_b | comp_c | dense | tight | wide40 | sum |
+|---|---|---|---|---|---|---|---|
+| large-best (cone 1.30, committed) | 72.8 | 63.2 | 65.0 | 75.4 ⚠ +3.0 pen | 71.6 | 76.6 | **424.6** |
+| rs=0.2 variant | 72.8 | 63.2 | 65.0 | 119.7 ⚠ +47.3 pen | 71.6 | 77.0 | 469.3 ✗ |
+| cone=1.10 variant | 69.6 | 63.0 | 63.2 | 72.8 | 72.4 | 78.8 | 419.8 |
+
+All full score. large-best relies on the safety net on 5/6 worlds (first attempts overshoot
+tolerances / dive to 0.18–0.37 m of obstacles; the net's fallback configs recover everything).
+cone=1.10 is cleaner/faster on the unseen set but −0.6 s worse on apocalypse_large itself;
+**decision: keep cone 1.30** (competition world expected large-like). rs=0.2 rejected.
+
+## Real world (actual pose evaluated → slacks stay 0; reference-level measurements)
+
+### cone_angle — base 0.45
+
+| value | large | dense | wide40 | worst obst. margin |
+|---|---|---|---|---|
+| 0.45 | 115.0 | 137.4 | 142.4 | 2.27 m |
+| 0.70 | 113.8 | 123.8 | 137.6 | 2.55 m |
+| **0.90** | **106.0** | 126.4 | **135.4** | 2.55 m |
+
+### path_smoothing (with cone 0.90) — base 0.8/1.5
+
+| ss/la | large | dense | wide40 | worst obst. margin |
+|---|---|---|---|---|
+| 0.8/1.5 | 106.0 | 126.4 | 135.4 | 2.55 m |
+| 1.2/1.5 | 104.8 | 124.6 | 133.4 | 2.52 m |
+| **1.2/2.0** | **103.8** | **121.0** | **132.0** | 2.50 m |
+
+### Inert knobs (measured/verified)
+
+- `balance_time_budget` 12 → 30 s: identical results, cap never reached — keep 12.
+- `path_planner/timeout`: no A* leg has ever timed out (~70 runs) — keep 10.
+
+### Final real_world config (cone 0.90, ss 1.2, la 2.0, slacks 0, dyn 0.90)
+
+| | large | comp_a | dense | tight | wide40 |
+|---|---|---|---|---|---|
+| final time | 103.8 | 109.0 | 121.0 | 115.4 | 132.0 |
+| score | 29/29 | 34/34 | 34/34 | 32/32 | 40/40 |
+| solve | 17.9 | 20.0 | 22.7 | 21.1 | 25.3 |
+
+All first attempts clean (no self-check FAILs); margins 2.46–2.71 m (limit 2.0);
+dense ×2 and wide40 ×1 unsafe viewpoints auto-relocated.

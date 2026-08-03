@@ -19,7 +19,7 @@ All changes live in [mrim_task/mrim_planner](mrim_task/mrim_planner) (the only f
 9. **Robustness fallbacks** — LKH failure → built-in 2-opt; TOPPRA failure → stop-at-waypoints sampling; A\* failure → RRT. No single failure can zero the score.
 10. **Unseen-world validation** — [local_eval/generate_problem.py](local_eval/generate_problem.py) generates worlds similar to (and harder than) `apocalypse_large`; the solution is validated on 6 such worlds besides the 3 official ones.
 
-11. **Shell-pose optimization (DP)** — for the fixed tour order, the actual inspection pose of every IP is chosen on its tolerance sphere by dynamic programming over flight-time estimates, so each UAV approaches every IP from the direction it is already flying (`tsp/shell_dp`). In the virtual challenge a controlled part of the inspection tolerances is spent as well (`radius_slack` 0.2 of the 0.3 m distance tolerance, `heading_slack` 0.15 of the 0.2 rad heading tolerance) — the reference is tracked exactly there; in the real-world config both slacks are 0 (tracking errors need the full tolerances).
+11. **Shell-pose optimization (DP)** — for the fixed tour order, the actual inspection pose of every IP is chosen on its tolerance sphere by dynamic programming over flight-time estimates, so each UAV approaches every IP from the direction it is already flying (`tsp/shell_dp`). In the virtual challenge a controlled part of the inspection tolerances is spent as well (`radius_slack` 0.25 of the 0.3 m distance tolerance, `heading_slack` 0.15 of the 0.2 rad heading tolerance) — the reference is tracked exactly there; in the real-world config both slacks are 0 (tracking errors need the full tolerances).
 12. **Unsafe-viewpoint relocation** — if a *nominal* viewpoint is closer to an obstacle than the evaluation limit (possible when an IP faces another structure — flying there would zero the whole score), the whole tolerance sphere is searched and the inspection is performed from a safe pose instead.
 13. **Escalating safety net** — the planner self-checks every zero-score condition; on any failure it replans with zero slacks first (keeping the DP + relocation), then with all aggressive features disabled, and as a last resort sacrifices the viewpoint nearest to an obstacle violation (max 3) — one lost point always beats a zeroed mission.
 
@@ -27,17 +27,17 @@ All changes live in [mrim_task/mrim_planner](mrim_task/mrim_planner) (the only f
 
 | Problem | Score | Mission time | Planning time |
 |---|:---:|:---:|:---:|
-| apocalypse_small | 8/8 | 22.6 s | ~6 s |
-| apocalypse_moderate | 16/16 | 40.0 s | ~9 s |
-| apocalypse_large | 29/29 | 63.6 s | ~13 s |
-| unseen_comp_a/b/c | 34+33+35 (all) | 68.8–73.2 s | ~16–33 s |
-| unseen_dense | 34/34 | 79.0 s | ~17 s |
-| unseen_tight | 32/32 | 79.8 s | ~33 s |
-| unseen_wide40 | 40/40 | 83.2 s | ~18 s |
+| apocalypse_small | 8/8 | 22.6 s | ~8 s |
+| apocalypse_moderate | 16/16 | 38.8 s | ~24 s |
+| apocalypse_large | 29/29 | 58.4 s | ~17 s |
+| unseen_comp_a/b/c | 34+33+35 (all) | 63.2–72.8 s | ~34–78 s |
+| unseen_dense | 34/34 | 72.4 s (+3.0 s penalty) | ~123 s |
+| unseen_tight | 32/32 | 71.6 s | ~76 s |
+| unseen_wide40 | 40/40 | 76.6 s | ~20 s |
 
-(The aggressive smoothing — `lookahead_dist` 1.5 m, `sampling_step` 0.8 m — lets TOPPRA fly the path considerably faster. On two of the nine worlds it makes the tolerance slacks overshoot; the self-check net detects that and automatically replans those with zero slacks, which is where the ~33 s planning times come from.)
+(The config is tuned to the apocalypse_large regime — see [result.md](result.md) for the full parameter study. It is deliberately aggressive: on most unseen worlds the first planning attempt violates a tolerance and the escalating safety net replans with the slacks/shell-DP dialed back, which is where the long planning times come from. The net's fallback configurations are themselves validated on all 9 worlds; only unseen_dense exceeds the 120 s soft solution limit, paying 3.0 s of tie-break penalty.)
 
-With the `real_world` config (3/3/1 m/s dynamics, 2.0/4.0 m distances, VP distance 5.0 m): apocalypse_large 29/29 @ 115.0 s, unseen_dense 34/34 @ 137.4 s (2 unsafe viewpoints auto-relocated — without relocation this world zero-scores), unseen_tight 32/32 @ 124.2 s, unseen_wide40 40/40 @ 142.4 s (min obstacle distances 2.27–2.68 m vs the 2.0 m limit).
+With the `real_world` config (3/3/1 m/s dynamics, 2.0/4.0 m distances, VP distance 5.0 m; cone 0.90, smoothing 1.2/2.0, zero slacks): apocalypse_large 29/29 @ 103.8 s, unseen_comp_a 34/34 @ 109.0 s, unseen_dense 34/34 @ 121.0 s (2 unsafe viewpoints auto-relocated — without relocation this world zero-scores), unseen_tight 32/32 @ 115.4 s, unseen_wide40 40/40 @ 132.0 s (1 viewpoint relocated). Min obstacle distances 2.46–2.71 m vs the 2.0 m limit, planning 18–25 s vs the 80 s soft limit, all first attempts clean.
 
 (Official `mrim_manager` in the Apptainer container reproduces these numbers exactly.)
 
@@ -95,13 +95,13 @@ Runs the real planner code with ROS stubbed out and evaluates it exactly like `m
 |---|:---:|---|
 | `trajectories/dynamics_safety_factor` | 0.97 / 0.90 | Scales every velocity/acceleration/heading-rate limit used for planning. **The main real-world reliability knob**: lower = slower but gentler reference the UAV can track accurately (small position/heading error near viewpoints, obstacle margins preserved). |
 | `path_smoothing/heading_hold_dist` (m) | 0.6 / 0.8 | Distance along the path before/after every viewpoint in which the heading is frozen at the inspection heading. Increase if inspections are missed because the UAV is *already rotating* while passing the viewpoint. |
-| `tsp/shell_dp/radius_slack` / `heading_slack` | 0.2, 0.15 / **0.0, 0.0** | Part of the inspection tolerances (±0.3 m, ±0.2 rad) the planner *spends* to shorten the tour; everything not spent remains as margin for tracking error. Must stay 0 in the real world. In virtual, the safety net resets them automatically if the self-check ever fails. |
-| `path_smoothing/lookahead_dist` (m) | 1.5 / 1.5 | Pure-pursuit smoothing radius: larger = smoother and faster corners but larger deviation from the collision-free polyline; smaller = tighter and slower. Trajectories pass exactly through the viewpoints either way. Reduce towards 0.8 if obstacle margins get tight. |
-| `path_smoothing/sampling_step` (m) | 0.8 / 0.8 | Spacing of the waypoints handed to TOPPRA. Smaller = the final spline follows the smoothed path more faithfully and decelerates more honestly in curves (safer, slower). Reduce towards 0.4 if constraints are violated or inspections are missed. |
+| `tsp/shell_dp/radius_slack` / `heading_slack` | 0.25, 0.15 / **0.0, 0.0** | Part of the inspection tolerances (±0.3 m, ±0.2 rad) the planner *spends* to shorten the tour; everything not spent remains as margin for tracking error. Must stay 0 in the real world. In virtual, the safety net resets them automatically if the self-check ever fails. |
+| `path_smoothing/lookahead_dist` (m) | 2.0 / 2.0 | Pure-pursuit smoothing radius: larger = smoother and faster corners but larger deviation from the collision-free polyline; smaller = tighter and slower. Trajectories pass exactly through the viewpoints either way. Reduce towards 0.8 if obstacle margins get tight. |
+| `path_smoothing/sampling_step` (m) | 1.2 / 1.2 | Spacing of the waypoints handed to TOPPRA. Smaller = the final spline follows the smoothed path more faithfully and decelerates more honestly in curves (safer, slower). Reduce towards 0.4 if constraints are violated or inspections are missed. |
 | `trajectory_sampling/with_stops` | false / false | **Guaranteed-capture fallback**: stop at every waypoint — a standstill sample with exact position and heading at each viewpoint. Costs a lot of mission time; the last resort if real UAVs keep missing inspections. |
 | `path_planner/obstacle_margin` (m) | 0.1 / 0.1 | Extra clearance added to the planning obstacle distance. Increase if the real UAV drifts closer to obstacles than planned (an obstacle violation zeroes the score). |
 | `collision_avoidance/mutual_margin` (m) | 0.3 / 0.5 | Extra margin on the minimum UAV–UAV distance used when computing deconfliction delays. |
-| `tsp/shell_dp/enabled`, `cone_angle` (rad) | true, 0.55 / true, 0.45 | Inspection-pose optimization on the tolerance spheres (incl. relocation of nominal viewpoints that violate the obstacle limit). `cone_angle` bounds how far poses may move from the nominal direction; smaller = more conservative. |
+| `tsp/shell_dp/enabled`, `cone_angle` (rad) | true, 1.30 / true, 0.90 | Inspection-pose optimization on the tolerance spheres (incl. relocation of nominal viewpoints that violate the obstacle limit). `cone_angle` bounds how far poses may move from the nominal direction; smaller = more conservative. |
 
 **Symptom → what to change (real world):**
 
